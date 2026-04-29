@@ -6,6 +6,7 @@ const PRIORITY_LABELS: Record<string, string> = { p0: "P0", p1: "P1", p2: "P2", 
 const PRIORITY_COLORS: Record<string, string> = {
   p0: "#f85149", p1: "#d29922", p2: "#58a6ff", later: "#484f58",
 };
+const PRIORITY_ORDER: Record<string, number> = { p0: 0, p1: 1, p2: 2, later: 3 };
 const STATUS_COLORS: Record<string, string> = {
   todo: "#8b949e", in_progress: "#58a6ff", done: "#3fb950", blocked: "#f85149",
 };
@@ -18,6 +19,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "david" | "gorjan">("all");
+  const [priorityFilter, setPriorityFilter] = useState<"all" | "p0" | "p1" | "p2" | "later">("all");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "" });
@@ -65,8 +67,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (selectedTask?.id === id) setSelectedTask(null);
   }
 
+  const visibleTasks = tasks.filter((t) => priorityFilter === "all" || t.priority === priorityFilter);
   const grouped = STATUSES.reduce((acc, s) => {
-    acc[s] = tasks.filter((t) => t.status === s);
+    acc[s] = visibleTasks
+      .filter((t) => t.status === s)
+      .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
     return acc;
   }, {} as Record<string, Task[]>);
 
@@ -81,7 +86,24 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Filter */}
+          {/* Priority filter */}
+          <div className="flex rounded-md overflow-hidden border" style={{ borderColor: "#30363d" }}>
+            {(["all", "p0", "p1", "p2", "later"] as const).map((p, i, arr) => (
+              <button
+                key={p}
+                onClick={() => setPriorityFilter(p)}
+                className="px-3 py-1.5 text-xs font-medium transition-colors"
+                style={{
+                  background: priorityFilter === p ? "#21262d" : "transparent",
+                  color: priorityFilter === p ? (p === "all" ? "#e6edf3" : PRIORITY_COLORS[p]) : "#8b949e",
+                  borderRight: i < arr.length - 1 ? "1px solid #30363d" : "none",
+                }}
+              >
+                {p === "all" ? "All" : PRIORITY_LABELS[p]}
+              </button>
+            ))}
+          </div>
+          {/* Assignee filter */}
           <div className="flex rounded-md overflow-hidden border" style={{ borderColor: "#30363d" }}>
             {(["all", "david", "gorjan"] as const).map((f) => (
               <button

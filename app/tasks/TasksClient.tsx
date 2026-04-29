@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Task } from "@/lib/supabase";
 
 const PRIORITY_LABELS: Record<string, string> = { p0: "P0", p1: "P1", p2: "P2", later: "Later" };
@@ -24,6 +24,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [showNew, setShowNew] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "" });
   const [saving, setSaving] = useState(false);
+
+  // Drag state
+  const dragTaskId = useRef<string | null>(null);
+  const dragSourceStatus = useRef<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,6 +72,45 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (selectedTask?.id === id) setSelectedTask(null);
   }
 
+  // Drag handlers
+  function onDragStart(e: React.DragEvent, taskId: string, status: string) {
+    dragTaskId.current = taskId;
+    dragSourceStatus.current = status;
+    e.dataTransfer.effectAllowed = "move";
+    // Ghost opacity
+    setTimeout(() => {
+      (e.target as HTMLElement).style.opacity = "0.4";
+    }, 0);
+  }
+
+  function onDragEnd(e: React.DragEvent) {
+    (e.target as HTMLElement).style.opacity = "1";
+    dragTaskId.current = null;
+    dragSourceStatus.current = null;
+    setDragOverColumn(null);
+  }
+
+  function onDragOver(e: React.DragEvent, status: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverColumn(status);
+  }
+
+  function onDragLeave() {
+    setDragOverColumn(null);
+  }
+
+  async function onDrop(e: React.DragEvent, targetStatus: string) {
+    e.preventDefault();
+    setDragOverColumn(null);
+    const id = dragTaskId.current;
+    const src = dragSourceStatus.current;
+    if (!id || src === targetStatus) return;
+    // Optimistic update
+    setTasks((prev) => prev.map((t) => t.id === id ? { ...t, status: targetStatus as Task["status"] } : t));
+    await updateTask(id, { status: targetStatus as Task["status"] });
+  }
+
   const visibleTasks = tasks.filter((t) => priorityFilter === "all" || t.priority === priorityFilter);
   const grouped = STATUSES.reduce((acc, s) => {
     acc[s] = visibleTasks
@@ -83,6 +127,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
           <h1 className="text-xl font-semibold" style={{ color: "#e6edf3" }}>Tasks</h1>
           <p className="text-sm mt-0.5" style={{ color: "#8b949e" }}>
             {tasks.filter((t) => t.status !== "done").length} open · {tasks.filter((t) => t.status === "done").length} done
+            <span className="ml-2 opacity-50">· drag cards to move columns</span>
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -218,8 +263,18 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
       ) : (
         <div className="grid grid-cols-4 gap-4">
           {STATUSES.map((status) => (
-            <div key={status}>
-              <div className="flex items-center gap-2 mb-3">
+            <div
+              key={status}
+              onDragOver={(e) => onDragOver(e, status)}
+              onDragLeave={onDragLeave}
+              onDrop={(e) => onDrop(e, status)}
+              className="min-h-32 rounded-lg transition-colors"
+              style={{
+                background: dragOverColumn === status ? "#1f6feb11" : "transparent",
+                border: dragOverColumn === status ? "2px dashed #58a6ff44" : "2px solid transparent",
+              }}
+            >
+              <div className="flex items-center gap-2 mb-3 px-1">
                 <div className="w-2 h-2 rounded-full" style={{ background: STATUS_COLORS[status] }} />
                 <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#8b949e" }}>
                   {STATUS_LABELS[status]}
@@ -230,13 +285,15 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 {grouped[status].map((task) => (
                   <div
                     key={task.id}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, task.id, status)}
+                    onDragEnd={onDragEnd}
                     onClick={() => setSelectedTask(task)}
-                    className="rounded-lg border p-3 cursor-pointer transition-colors"
+                    className="rounded-lg border p-3 cursor-grab active:cursor-grabbing transition-colors select-none"
                     style={{ background: "#161b22", borderColor: "#30363d" }}
                     onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#58a6ff")}
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#30363d")}
                   >
-                    {/* Priority + Assignee */}
                     <div className="flex items-center gap-1.5 mb-2">
                       <span
                         className="text-xs font-mono px-1 py-0.5 rounded"
@@ -272,9 +329,13 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   </div>
                 ))}
                 {grouped[status].length === 0 && (
-                  <div className="rounded-lg border-2 border-dashed p-4 text-center"
-                    style={{ borderColor: "#21262d" }}>
-                    <p className="text-xs" style={{ color: "#30363d" }}>Empty</p>
+                  <div
+                    className="rounded-lg border-2 border-dashed p-4 text-center"
+                    style={{ borderColor: dragOverColumn === status ? "#58a6ff44" : "#21262d" }}
+                  >
+                    <p className="text-xs" style={{ color: dragOverColumn === status ? "#58a6ff" : "#30363d" }}>
+                      {dragOverColumn === status ? "Drop here" : "Empty"}
+                    </p>
                   </div>
                 )}
               </div>
@@ -333,72 +394,4 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
               <div>
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Priority</label>
                 <select
-                  className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
-                  style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                  value={selectedTask.priority}
-                  onChange={(e) => { const v = e.target.value as Task["priority"]; updateTask(selectedTask.id, { priority: v }); setSelectedTask((p) => p ? { ...p, priority: v } : null); }}
-                >
-                  <option value="p0">P0 — Critical</option>
-                  <option value="p1">P1 — High</option>
-                  <option value="p2">P2 — Normal</option>
-                  <option value="later">Later</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Assignee</label>
-                <select
-                  className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
-                  style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                  value={selectedTask.assignee}
-                  onChange={(e) => { const v = e.target.value as Task["assignee"]; updateTask(selectedTask.id, { assignee: v }); setSelectedTask((p) => p ? { ...p, assignee: v } : null); }}
-                >
-                  <option value="david">David</option>
-                  <option value="gorjan">Gorjan</option>
-                  <option value="both">Both</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Project</label>
-                <input
-                  className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
-                  style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                  value={selectedTask.project || ""}
-                  onChange={(e) => setSelectedTask((p) => p ? { ...p, project: e.target.value } : null)}
-                  onBlur={() => updateTask(selectedTask.id, { project: selectedTask.project })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Notes</label>
-              <textarea
-                className="w-full px-3 py-2 rounded-md text-sm outline-none resize-none"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                rows={4}
-                placeholder="Add notes, links, context…"
-                value={selectedTask.notes || ""}
-                onChange={(e) => setSelectedTask((p) => p ? { ...p, notes: e.target.value } : null)}
-                onBlur={() => updateTask(selectedTask.id, { notes: selectedTask.notes })}
-              />
-            </div>
-          </div>
-          <div className="px-5 py-4 border-t flex gap-2" style={{ borderColor: "#30363d" }}>
-            <button
-              onClick={() => updateTask(selectedTask.id, { status: "done" })}
-              className="flex-1 py-2 rounded-md text-xs font-semibold"
-              style={{ background: "#1a7f37", color: "#fff" }}
-            >
-              ✓ Mark Done
-            </button>
-            <button
-              onClick={() => deleteTask(selectedTask.id)}
-              className="px-4 py-2 rounded-md text-xs"
-              style={{ background: "#21262d", color: "#f85149" }}
-            >
-              Delete
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+                  className="

@@ -1,7 +1,4 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  experimental: {},
-};
-
-export default nextConfig;
+  transpilePackages: ["react-markdown", "remark-gfm

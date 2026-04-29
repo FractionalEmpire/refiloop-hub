@@ -7,6 +7,7 @@ const NAV = [
   { href: "/tasks", label: "Tasks", icon: "✓" },
   { href: "/eod", label: "EOD Updates", icon: "📋" },
   { href: "/docs", label: "Docs", icon: "📄" },
+  { href: "/filters", label: "Filters", icon: "⚙️" },
   { href: "/context", label: "Business Context", icon: "🏢" },
 ];
 
@@ -112,9 +113,4 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             title="Sign out"
           >
             ⏏
-          </button>
-        </div>
-      </div>
-    </aside>
-  );
-}
+          

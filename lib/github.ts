@@ -1,6 +1,6 @@
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "FractionalEmpire";
-const GITHUB_REPO = process.env.GITHUB_REPO || "refiloop-config";
+const GITHUB_REPO = process.env.GITHUB_REPO || "refiloop2";
 
 const BASE = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
 
@@ -10,21 +10,40 @@ const headers = () => ({
   Accept: "application/vnd.github.v3+json",
 });
 
-// List of MD files to surface in the docs section
-export const TRACKED_DOCS = [
-  { path: "CLAUDE.md", label: "CLAUDE.md (Project Instructions)" },
-  { path: "README.md", label: "README" },
-  { path: "STATE.md", label: "STATE.md (Session Handoff)" },
-  { path: "docs/GORJAN_ONBOARDING.md", label: "Gorjan Onboarding Guide" },
-];
-
 export type DocFile = {
   path: string;
   label: string;
+  group: string;
   content?: string;
   sha?: string;
   exists?: boolean;
 };
+
+// All tracked MD files grouped by category
+export const TRACKED_DOCS: DocFile[] = [
+  // Operations
+  { path: "CLAUDE.md",                            label: "Project Instructions (CLAUDE.md)",      group: "Operations" },
+  { path: "STATE.md",                             label: "Session Handoff (STATE.md)",            group: "Operations" },
+  { path: "LEAD_FILTERS.md",                      label: "Lead Filters",                          group: "Operations" },
+  { path: "docs/refiloop-full-process-flow.md",   label: "Full Process Flow",                     group: "Operations" },
+  { path: "docs/capitalize-process-flow.md",      label: "Capitalize.io Process Flow",            group: "Operations" },
+  // Dialer & Calling
+  { path: "docs/Mojo_Dialer_Integration.md",      label: "Mojo Dialer Integration",               group: "Dialer" },
+  { path: "docs/Kirk_Mojo_Import_Guide.md",       label: "Kirk: Daily Import Guide",              group: "Dialer" },
+  { path: "docs/Kirk_Cheat_Sheet.md",             label: "Kirk: Call Cheat Sheet",                group: "Dialer" },
+  { path: "docs/RefiLoop_Call_Script_v1.md",      label: "Call Script v1",                        group: "Dialer" },
+  // Skip Trace & Data
+  { path: "docs/supabase-database-guide.md",      label: "Supabase Database Guide",               group: "Data" },
+  { path: "docs/skip-trace-scoring-proposal.md",  label: "Skip Trace Scoring Proposal",           group: "Data" },
+  { path: "docs/scraper-playbook.md",             label: "Scraper Playbook",                      group: "Data" },
+  // Infrastructure
+  { path: "docs/VPS_Infrastructure.md",           label: "VPS Infrastructure",                    group: "Infrastructure" },
+  { path: "idi/README.md",                        label: "IDI API README",                        group: "Infrastructure" },
+  { path: "idi/nordlayer_setup.md",               label: "Nordlayer VPN Setup",                   group: "Infrastructure" },
+  // Onboarding
+  { path: "Gorjan_Day1_Agenda.md",                label: "Gorjan Day 1 Agenda",                   group: "Onboarding" },
+  { path: "README.md",                            label: "Project README",                        group: "Onboarding" },
+];
 
 export async function getFileContent(path: string): Promise<{ content: string; sha: string } | null> {
   if (!GITHUB_TOKEN) return null;

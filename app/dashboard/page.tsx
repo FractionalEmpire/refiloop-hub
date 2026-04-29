@@ -154,10 +154,8 @@ export default async function DashboardPage() {
               {commits.length > 0 ? (
                 commits.map((c: { sha: string; url: string; message: string; author: string; date: string }) => (
                   <a key={c.sha} href={c.url} target="_blank" rel="noopener noreferrer"
-                    className="flex items-start gap-3 px-5 py-3 transition-colors block"
+                    className="flex items-start gap-3 px-5 py-3 transition-colors block hover:bg-[#21262d]"
                     style={{ textDecoration: "none" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#21262d")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
                     <code className="text-xs shrink-0 mt-0.5" style={{ color: "#58a6ff" }}>{c.sha}</code>
                     <div className="flex-1 min-w-0">

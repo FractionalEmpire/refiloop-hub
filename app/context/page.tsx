@@ -84,7 +84,8 @@ function ContextContent({ user }: { user: "david" | "gorjan" }) {
             { name: "Gorjan", role: "Backend Engineer", email: "gorjan@texastax.loan", color: "#3fb950" },
             { name: "Matt", role: "Senior Broker (T2/T3 deals)", email: "—", color: "#d29922" },
             { name: "Kirk Teru", role: "Caller (outbound dialing)", email: "—", color: "#db6d28" },
-            { name: "Rica", role: "EA", email: "—", color: "#8b949e" },
+            { name: "Lynn", role: "Admin", email: "—", color: "#8b949e" },
+            { name: "Keith", role: "Operations Coordinator", email: "—", color: "#a371f7" },
           ].map((m) => (
             <div key={m.name} className="flex items-center gap-3">
               <div
@@ -135,7 +136,7 @@ function ContextContent({ user }: { user: "david" | "gorjan" }) {
             "IDI API skip traces each owner to find phone numbers and emails. Cron runs every 2h, 200 records/run (target: 300/day hard cap).",
             "Successfully skip-traced records are pushed into Mojo Dialer for outreach calls by Kirk.",
             "Call outcomes (call-backs, interested, not interested, DNC) sync back to Supabase.",
-            "Interested leads move into the Airtable CRM pipeline (Hot Leads → Pipeline Jobs).",
+            "Interested leads move into the Airtable CRM pipeline (Hot Leads → Pipeline Jobs) and are logged in Supabase outreach_log.",
             "Phase 2: cold email outreach via burner domains for non-phone contacts.",
           ].map((step, i) => (
             <li key={i} className="flex gap-3">
@@ -175,28 +176,43 @@ function ContextContent({ user }: { user: "david" | "gorjan" }) {
 
       {/* Gorjan Access Checklist */}
       <Section title="✅ Gorjan&apos;s Access Checklist">
-        <p className="text-xs mb-4" style={{ color: "#8b949e" }}>
-          David is handling these. Once access is granted, update the dashboard checklist.
-        </p>
-        <div className="space-y-2">
-          {[
-            { item: "texastax.loan email created (gorjan@texastax.loan)", note: "Required for all invites" },
-            { item: "Supabase — project dxvanitpqvvxvroywdml", note: "Full access to DB, Edge Functions, logs" },
-            { item: "Vercel — refiloop-hub + skip-trace-ui projects", note: "Deploy, env vars, logs" },
-            { item: "GitHub — FractionalEmpire org", note: "Push/pull refiloop-config repo" },
-            { item: "Hostinger VPS — SSH root@2.24.197.63", note: "VPS management, cron, services" },
-            { item: "1Password — Clawd vault", note: "All credentials for integrations" },
-            { item: "Nordlayer VPN", note: "Required to hit IDI API" },
-            { item: "Mojo Dialer — account 493218", note: "Lead sheet management" },
-          ].map((a) => (
-            <div key={a.item} className="flex items-start gap-2.5">
-              <div className="w-4 h-4 rounded border mt-0.5 shrink-0" style={{ borderColor: "#30363d" }} />
-              <div>
-                <p className="text-xs" style={{ color: "#c9d1d9" }}>{a.item}</p>
-                <p className="text-xs" style={{ color: "#484f58" }}>{a.note}</p>
+        <div className="mb-4">
+          <p className="text-xs font-semibold mb-2" style={{ color: "#3fb950" }}>GRANTED</p>
+          <div className="space-y-2">
+            {[
+              { item: "texastax.loan email (gorjan@texastax.loan)", note: "Required for all invites" },
+              { item: "Supabase — project dxvanitpqvvxvroywdml", note: "Full access to DB, Edge Functions, logs" },
+              { item: "Vercel — refiloop-hub + skip-trace-ui projects", note: "Deploy, env vars, logs" },
+              { item: "GitHub — FractionalEmpire org", note: "Push/pull refiloop-config repo" },
+              { item: "Hostinger VPS — SSH root@2.24.197.63", note: "VPS management, cron, services (root + password)" },
+              { item: "Nordlayer VPN", note: "Required to hit IDI API" },
+            ].map((a) => (
+              <div key={a.item} className="flex items-start gap-2.5">
+                <span className="text-xs mt-0.5 shrink-0" style={{ color: "#3fb950" }}>✓</span>
+                <div>
+                  <p className="text-xs" style={{ color: "#c9d1d9" }}>{a.item}</p>
+                  <p className="text-xs" style={{ color: "#484f58" }}>{a.note}</p>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold mb-2" style={{ color: "#8b949e" }}>PENDING</p>
+          <div className="space-y-2">
+            {[
+              { item: "1Password — Clawd vault", note: "All credentials for integrations" },
+              { item: "Mojo Dialer — account 493218", note: "Lead sheet management" },
+            ].map((a) => (
+              <div key={a.item} className="flex items-start gap-2.5">
+                <div className="w-4 h-4 rounded border mt-0.5 shrink-0" style={{ borderColor: "#30363d" }} />
+                <div>
+                  <p className="text-xs" style={{ color: "#c9d1d9" }}>{a.item}</p>
+                  <p className="text-xs" style={{ color: "#484f58" }}>{a.note}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </Section>
 
@@ -206,19 +222,4 @@ function ContextContent({ user }: { user: "david" | "gorjan" }) {
           {[
             { icon: "📋", title: "Tasks Board", desc: "All work is tracked in the Tasks tab. David creates tasks for Gorjan; Gorjan ticks them off when done. Use P0/P1/P2 to prioritize." },
             { icon: "📝", title: "EOD Updates", desc: "Gorjan posts an EOD each day summarizing what shipped and any blockers. David reviews and responds." },
-            { icon: "🔀", title: "Git Relay", desc: "David builds features in Claude Code/Cowork and pushes to GitHub. Gorjan pulls and continues. The Docs tab shows recent commits." },
-            { icon: "📄", title: "Docs", desc: "CLAUDE.md and README live in GitHub. Both can edit them in the Docs tab — changes commit directly to the repo." },
-          ].map((c) => (
-            <div key={c.title} className="flex gap-3">
-              <span className="text-lg mt-0.5">{c.icon}</span>
-              <div>
-                <p className="text-sm font-medium" style={{ color: "#e6edf3" }}>{c.title}</p>
-                <p className="text-xs mt-0.5 leading-relaxed" style={{ color: "#8b949e" }}>{c.desc}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Section>
-    </div>
-  );
-}
+            { icon: "🔀", 

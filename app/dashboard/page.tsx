@@ -174,26 +174,30 @@ export default async function DashboardPage() {
             </div>
           </div>
 
-          {/* Gorjan Onboarding */}
+          {/* Gorjan Access Tracker */}
           <div className="rounded-xl border" style={{ background: "#161b22", borderColor: "#30363d" }}>
-            <div className="px-5 py-4 border-b" style={{ borderColor: "#30363d" }}>
-              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>🔑 Gorjan Access Checklist</h2>
+            <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: "#30363d" }}>
+              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>🔑 Gorjan System Access</h2>
+              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#1a7f3720", color: "#3fb950" }}>5 / 9 done</span>
             </div>
             <div className="px-5 py-4 space-y-2">
               {[
-                "texastax.loan email created",
-                "Supabase access granted",
-                "Vercel access granted",
-                "GitHub (FractionalEmpire) access",
-                "Hostinger VPS access",
-                "1Password (Clawd vault)",
-                "Nordlayer VPN",
-                "Mojo Dialer account 493218",
-              ].map((item) => (
-                <div key={item} className="flex items-center gap-2.5 text-xs">
-                  <div className="w-4 h-4 rounded border flex items-center justify-center shrink-0"
-                    style={{ borderColor: "#30363d" }} />
-                  <span style={{ color: "#8b949e" }}>{item}</span>
+                { label: "Gmail (gorjan@texastax.loan)", done: true },
+                { label: "Supabase (dxvanitpqvvxvroywdml)", done: true },
+                { label: "GitHub (FractionalEmpire org)", done: true },
+                { label: "Vercel (david-greenbaums-projects)", done: true },
+                { label: "RefiLoop Hub (refiloop-hub.vercel.app)", done: true },
+                { label: "Hostinger VPS (2.24.197.63)", done: false },
+                { label: "1Password (Clawd vault)", done: false },
+                { label: "Nordlayer VPN", done: false },
+                { label: "Mojo Dialer (account 493218)", done: false },
+              ].map(({ label, done }) => (
+                <div key={label} className="flex items-center gap-2.5 text-xs">
+                  <div className="w-4 h-4 rounded border flex items-center justify-center shrink-0 text-xs"
+                    style={{ borderColor: done ? "#3fb950" : "#30363d", background: done ? "#1a7f3730" : "transparent", color: "#3fb950" }}>
+                    {done ? "✓" : ""}
+                  </div>
+                  <span style={{ color: done ? "#c9d1d9" : "#484f58" }}>{label}</span>
                 </div>
               ))}
             </div>

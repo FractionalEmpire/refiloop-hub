@@ -1,25 +1,17 @@
 import { NextResponse } from "next/server";
-
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-const headers = () => ({
-  apikey: SUPABASE_KEY,
-  Authorization: `Bearer ${SUPABASE_KEY}`,
-  "Content-Type": "application/json",
-});
+import { supabase } from "@/lib/supabase";
 
 export async function GET() {
-  // Fetch all tasks with a project set
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/tasks?select=id,project,status,priority,title,assignee&project=neq.&order=project`,
-    { headers: headers(), cache: "no-store" }
-  );
-  const tasks = await res.json();
+  const { data: tasks, error } = await supabase
+    .from("collab_tasks")
+    .select("id, project, status, priority, title, assignee")
+    .not("project", "is", null)
+    .neq("project", "")
+    .order("project");
 
-  if (!Array.isArray(tasks)) return NextResponse.json([]);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!tasks) return NextResponse.json([]);
 
-  // Group by project
   const projectMap: Record<string, {
     name: string;
     tasks: typeof tasks;
@@ -37,7 +29,6 @@ export async function GET() {
   }
 
   const projects = Object.values(projectMap).sort((a, b) => {
-    // Sort: projects with in_progress first, then by total task count
     const aActive = a.counts.in_progress + a.counts.blocked;
     const bActive = b.counts.in_progress + b.counts.blocked;
     if (bActive !== aActive) return bActive - aActive;

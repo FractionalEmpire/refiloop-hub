@@ -70,10 +70,19 @@ export default function StandupClient({ user }: { user: "david" | "gorjan" }) {
 
     setRecords((prev) => {
       const existing = prev.find((r) => r.date === todayStr);
+      const ts = new Date().toISOString();
       if (existing) {
-        return prev.map((r) => r.date === todayStr ? { ...r, ...patch, updated_at: new Date().toISOString() } : r);
+        return prev.map((r) => r.date === todayStr ? { ...r, ...patch, updated_at: ts } : r);
       }
-      return [{ id: "", date: todayStr, ...patch, updated_at: new Date().toISOString() }, ...prev];
+      const newRec: StandupRecord = {
+        id: "",
+        date: todayStr,
+        agenda: patch.agenda ?? "",
+        for_gorjan: patch.for_gorjan ?? "",
+        for_david: patch.for_david ?? "",
+        updated_at: ts,
+      };
+      return [newRec, ...prev];
     });
   }
 

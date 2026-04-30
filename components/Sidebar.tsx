@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: "⊞" },
   { href: "/tasks", label: "Tasks", icon: "✓" },
+  { href: "/projects", label: "Projects", icon: "◈" },
   { href: "/eod", label: "EOD Updates", icon: "📋" },
   { href: "/docs", label: "Docs", icon: "📄" },
   { href: "/filters", label: "Filters", icon: "⚙️" },
@@ -110,7 +111,4 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             style={{ color: "#484f58" }}
             onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
-            title="Sign out"
-          >
-            ⏏
           

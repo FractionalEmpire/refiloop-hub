@@ -111,4 +111,12 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             style={{ color: "#484f58" }}
             onMouseEnter={(e) => (e.currentTarget.style.color = "#f85149")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
-          
+            title="Sign out"
+          >
+            ⏏
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}

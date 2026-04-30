@@ -28,6 +28,8 @@ export const TRACKED_DOCS: DocFile[] = [
   { path: "docs/refiloop-full-process-flow.md",   label: "Full Process Flow",                     group: "Operations" },
   { path: "docs/capitalize-process-flow.md",      label: "Capitalize.io Process Flow",            group: "Operations" },
   // Dialer & Calling
+  { path: "docs/calling-queue-rules.md",           label: "Daily Calling Queue Rules",            group: "Dialer" },
+  { path: "docs/mojo-daily-push.md",               label: "Daily Mojo Push — How It Works",        group: "Dialer" },
   { path: "docs/Mojo_Dialer_Integration.md",      label: "Mojo Dialer Integration",               group: "Dialer" },
   { path: "docs/Kirk_Mojo_Import_Guide.md",       label: "Kirk: Daily Import Guide",              group: "Dialer" },
   { path: "docs/Kirk_Cheat_Sheet.md",             label: "Kirk: Call Cheat Sheet",                group: "Dialer" },
@@ -37,71 +39,4 @@ export const TRACKED_DOCS: DocFile[] = [
   { path: "docs/skip-trace-scoring-proposal.md",  label: "Skip Trace Scoring Proposal",           group: "Data" },
   { path: "docs/scraper-playbook.md",             label: "Scraper Playbook",                      group: "Data" },
   // Infrastructure
-  { path: "docs/VPS_Infrastructure.md",           label: "VPS Infrastructure",                    group: "Infrastructure" },
-  { path: "idi/README.md",                        label: "IDI API README",                        group: "Infrastructure" },
-  { path: "idi/nordlayer_setup.md",               label: "Nordlayer VPN Setup",                   group: "Infrastructure" },
-  // Onboarding
-  { path: "Gorjan_Day1_Agenda.md",                label: "Gorjan Day 1 Agenda",                   group: "Onboarding" },
-  { path: "README.md",                            label: "Project README",                        group: "Onboarding" },
-];
-
-export async function getFileContent(path: string): Promise<{ content: string; sha: string } | null> {
-  if (!GITHUB_TOKEN) return null;
-  try {
-    const res = await fetch(`${BASE}/contents/${path}`, {
-      headers: headers(),
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const content = Buffer.from(data.content, "base64").toString("utf-8");
-    return { content, sha: data.sha };
-  } catch {
-    return null;
-  }
-}
-
-export async function updateFileContent(
-  path: string,
-  content: string,
-  sha: string,
-  message: string
-): Promise<boolean> {
-  if (!GITHUB_TOKEN) return false;
-  try {
-    const encoded = Buffer.from(content).toString("base64");
-    const res = await fetch(`${BASE}/contents/${path}`, {
-      method: "PUT",
-      headers: headers(),
-      body: JSON.stringify({
-        message,
-        content: encoded,
-        sha,
-      }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-export async function getRecentCommits(count = 5) {
-  if (!GITHUB_TOKEN) return [];
-  try {
-    const res = await fetch(`${BASE}/commits?per_page=${count}`, {
-      headers: headers(),
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.map((c: { sha: string; commit: { message: string; author: { name: string; date: string } }; html_url: string }) => ({
-      sha: c.sha.slice(0, 7),
-      message: c.commit.message.split("\n")[0],
-      author: c.commit.author.name,
-      date: c.commit.author.date,
-      url: c.html_url,
-    }));
-  } catch {
-    return [];
-  }
-}
+  { path: "docs/VPS_Infrastructure.md",           label: "VPS Infrastructure",                    group

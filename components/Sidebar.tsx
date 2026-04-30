@@ -6,10 +6,10 @@ const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: "⊞" },
   { href: "/tasks", label: "Tasks", icon: "✓" },
   { href: "/projects", label: "Projects", icon: "◈" },
-  { href: "/eod", label: "EOD Updates", icon: "📋" },
-  { href: "/docs", label: "Docs", icon: "📄" },
-  { href: "/filters", label: "Filters", icon: "⚙️" },
-  { href: "/context", label: "Business Context", icon: "🏢" },
+  { href: "/eod", label: "EOD Updates", icon: "≡" },
+  { href: "/docs", label: "Docs", icon: "▤" },
+  { href: "/filters", label: "Filters", icon: "◎" },
+  { href: "/context", label: "Business Context", icon: "⬡" },
 ];
 
 export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
@@ -86,7 +86,7 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "#8b949e")}
           >
-            ↗ {l.label}
+            &nearr; {l.label}
           </a>
         ))}
       </div>
@@ -113,7 +113,7 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
             title="Sign out"
           >
-            ⏏
+            &#9167;
           </button>
         </div>
       </div>

@@ -3,14 +3,15 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const NAV = [
-  { href: "/dashboard", label: "Dashboard", icon: "⊞" },
-  { href: "/tasks", label: "Tasks", icon: "✓" },
-  { href: "/projects", label: "Projects", icon: "◈" },
-  { href: "/eod", label: "EOD Updates", icon: "≡" },
-  { href: "/standup", label: "Daily Standup", icon: "◷" },
-  { href: "/docs", label: "Docs", icon: "▤" },
-  { href: "/filters", label: "Filters", icon: "◎" },
-  { href: "/context", label: "Business Context", icon: "⬡" },
+  { href: "/dashboard", label: "Dashboard", icon: "â" },
+  { href: "/hot-leads", label: "Hot Leads", icon: "ð¥" },
+  { href: "/tasks", label: "Tasks", icon: "â" },
+  { href: "/projects", label: "Projects", icon: "â" },
+  { href: "/eod", label: "EOD Updates", icon: "â¡" },
+  { href: "/standup", label: "Daily Standup", icon: "â·" },
+  { href: "/docs", label: "Docs", icon: "â¤" },
+  { href: "/filters", label: "Filters", icon: "â" },
+  { href: "/context", label: "Business Context", icon: "â¬¡" },
 ];
 
 export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
@@ -87,7 +88,7 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "#8b949e")}
           >
-            ↗ {l.label}
+            â {l.label}
           </a>
         ))}
       </div>

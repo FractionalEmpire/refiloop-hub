@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -29,15 +30,14 @@ export async function POST(
     })
     .eq("id", id);
 
-  // Fire executor — don't await (fire and forget)
+  // waitUntil keeps the lambda alive until execute completes (up to execute's maxDuration)
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://refiloop-hub.vercel.app";
-  fetch(`${appUrl}/api/tasks/${id}/execute`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-internal-key": process.env.INTERNAL_API_KEY || "",
-    },
-  }).catch(() => {});
+  waitUntil(
+    fetch(`${appUrl}/api/tasks/${id}/execute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    }).catch(() => {})
+  );
 
   return NextResponse.json({
     ok: true,

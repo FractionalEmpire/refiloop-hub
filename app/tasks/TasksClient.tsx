@@ -14,6 +14,11 @@ const STATUS_LABELS: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", done: "Done", blocked: "Blocked",
 };
 const STATUSES = ["todo", "in_progress", "blocked", "done"] as const;
+const TYPE_CONFIG: Record<string, { label: string; icon: string; color: string; bg: string }> = {
+  bug:     { label: "Bug",     icon: "🐛", color: "#f85149", bg: "#f8514920" },
+  feature: { label: "Feature", icon: "✨", color: "#58a6ff", bg: "#58a6ff20" },
+  task:    { label: "Task",    icon: "☑",  color: "#8b949e", bg: "#8b949e20" },
+};
 
 const ASSIGNEE_COLOR: Record<string, string> = {
   david: "#1f6feb",
@@ -31,9 +36,10 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [filter, setFilter] = useState<"all" | "david" | "gorjan" | "claude">("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "p0" | "p1" | "p2" | "later">("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "bug" | "feature" | "task">("all");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "" });
+  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
@@ -77,7 +83,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     });
     const task = await res.json();
     setTasks((prev) => [task, ...prev]);
-    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "" });
+    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
     setShowNew(false);
     setSaving(false);
   }
@@ -110,6 +116,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const visibleTasks = tasks.filter((t) => {
     if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
     if (projectFilter !== "all" && (t.project || "") !== projectFilter) return false;
+    if (typeFilter !== "all" && (t.type || "task") !== typeFilter) return false;
     return true;
   });
   const grouped = STATUSES.reduce((acc, s) => {
@@ -176,6 +183,23 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
               </button>
             ))}
           </div>
+          {/* Type filter */}
+          <div className="flex rounded-md overflow-hidden border" style={{ borderColor: "#30363d" }}>
+            {(["all", "bug", "feature", "task"] as const).map((tp, i, arr) => (
+                <button
+                      key={tp}
+                            onClick={() => setTypeFilter(tp)}
+                                  className="px-3 py-1.5 text-xs font-medium transition-colors"
+                                        style={{
+                                                background: typeFilter === tp ? "#21262d" : "transparent",
+                                                        color: typeFilter === tp ? (TYPE_CONFIG[tp]?.color || "#e6edf3") : "#8b949e",
+                                                                borderRight: i < arr.length - 1 ? "1px solid #30363d" : "none",
+                                                                      }}
+                                                                          >
+                                                                                {tp === "all" ? "All" : `${TYPE_CONFIG[tp].icon} ${TYPE_CONFIG[tp].label}`}
+                                                                                    </button>
+                                                                                      ))}
+                                                                                      </div>
           <button
             onClick={() => setShowNew(true)}
             className="px-3 py-1.5 text-xs font-semibold rounded-md"
@@ -207,7 +231,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 value={newTask.description}
                 onChange={(e) => setNewTask((p) => ({ ...p, description: e.target.value }))}
               />
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Assignee</label>
                   <select
@@ -245,6 +269,19 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     value={newTask.project}
                     onChange={(e) => setNewTask((p) => ({ ...p, project: e.target.value }))}
                   />
+                </div>
+                <div>
+                <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Type</label>
+                <select
+                className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
+                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+                value={newTask.type}
+                onChange={(e) => setNewTask((p) => ({ ...p, type: e.target.value }))}
+                >
+                <option value="task">☑ Task</option>
+                <option value="bug">🐛 Bug</option>
+                <option value="feature">✨ Feature</option>
+                </select>
                 </div>
               </div>
               {newTask.assignee === "claude" && (
@@ -313,6 +350,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = task.assignee === "claude" ? "#d9770640" : "#30363d")}
                   >
                     <div className="flex items-center gap-1.5 mb-2">
+                      <span className="text-xs px-1 py-0.5 rounded" style={{ background: TYPE_CONFIG[task.type || "task"]?.bg || "#8b949e20", color: TYPE_CONFIG[task.type || "task"]?.color || "#8b949e" }}>{TYPE_CONFIG[task.type || "task"]?.icon || "☑"}</span>
                       <span
                         className="text-xs font-mono px-1 py-0.5 rounded"
                         style={{ background: `${PRIORITY_COLORS[task.priority]}20`, color: PRIORITY_COLORS[task.priority] }}

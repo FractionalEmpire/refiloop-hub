@@ -27,14 +27,14 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { title, description, assignee, status, priority, project, notes } = body;
+  const { title, description, assignee, status, priority, project, notes, type } = body;
 
   const { data, error } = await supabase
     .from("collab_tasks")
-    .insert({ title, description, assignee, status: status || "todo", priority: priority || "p1", project, notes })
+    .insert({ title, description, assignee, status: status || "todo", priority: priority || "p1", project, notes, type: type || "task" })
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data, { status: 201 });
 }

@@ -17,6 +17,7 @@ export type Task = {
   priority: "p0" | "p1" | "p2" | "later";
   project: string | null;
   notes: string | null;
+    type: "bug" | "feature" | "task";
   triggered_at: string | null;
   created_at: string;
   updated_at: string;

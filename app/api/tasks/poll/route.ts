@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
+export const dynamic = "force-dynamic";
+
 // Called by Vercel cron every 5 minutes (configured in vercel.json).
 // Picks up any claude-assigned tasks in "todo" state and triggers the executor.
 

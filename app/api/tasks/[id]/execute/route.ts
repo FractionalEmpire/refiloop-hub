@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -261,12 +261,6 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  // Simple auth guard
-  const key = req.headers.get("x-internal-key");
-  if (process.env.INTERNAL_API_KEY && key !== process.env.INTERNAL_API_KEY) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = params;
   const { data: task, error } = await supabase
     .from("collab_tasks")

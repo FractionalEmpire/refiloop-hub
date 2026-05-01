@@ -2,6 +2,20 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+type ReqDoc = { label: string; path: string };
+
+const PROJECT_DOCS: Record<string, ReqDoc[]> = {
+  "Skip Trace": [
+    { label: "Entity vs Human",   path: "docs/REQ-entity-vs-human.md" },
+    { label: "Skip Trace Tabs",   path: "docs/REQ-skip-trace-tabs.md" },
+    { label: "Error Display",     path: "docs/REQ-skip-trace-error-display.md" },
+  ],
+  "Dialer": [
+    { label: "Mojo Daily Push",   path: "docs/REQ-mojo-daily-push.md" },
+    { label: "Mojo Results Pull", path: "docs/REQ-mojo-results-pull.md" },
+  ],
+};
+
 type ProjectData = {
   name: string;
   tasks: { id: string; title: string; status: string; priority: string; assignee: string }[];
@@ -83,6 +97,7 @@ export default function ProjectsClient() {
           const total = proj.tasks.length;
           const doneCount = proj.counts.done;
           const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+          const docs = PROJECT_DOCS[proj.name] ?? [];
 
           return (
             <div
@@ -108,6 +123,11 @@ export default function ProjectsClient() {
                     <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#21262d", color: "#8b949e" }}>
                       {health.label}
                     </span>
+                    {docs.length > 0 && (
+                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#1f2d3d", color: "#58a6ff" }}>
+                        {docs.length} REQ{docs.length > 1 ? "s" : ""}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     {statusBadge("todo", proj.counts.todo, STATUS_COLOR.todo)}
@@ -167,6 +187,24 @@ export default function ProjectsClient() {
                       </div>
                     ))}
                   </div>
+
+                  {docs.length > 0 && (
+                    <div className="px-5 py-3 border-t" style={{ borderColor: "#21262d" }}>
+                      <div className="text-xs font-semibold mb-2" style={{ color: "#484f58" }}>REQUIREMENTS</div>
+                      <div className="flex flex-wrap gap-2">
+                        {docs.map((doc) => (
+                          <Link
+                            key={doc.path}
+                            href={`/docs?path=${encodeURIComponent(doc.path)}`}
+                            className="text-xs px-2.5 py-1 rounded-md"
+                            style={{ background: "#1f2d3d", color: "#58a6ff", border: "1px solid #1f6feb40" }}
+                          >
+                            {doc.label}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="px-5 py-3">
                     <Link
                       href={`/tasks?project=${encodeURIComponent(proj.name)}`}

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { Task } from "@/lib/supabase";
 
 const PRIORITY_LABELS: Record<string, string> = { p0: "P0", p1: "P1", p2: "P2", later: "Later" };
@@ -30,6 +30,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "david" | "gorjan" | "claude">("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "p0" | "p1" | "p2" | "later">("all");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "" });
@@ -47,6 +48,14 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  const availableProjects = useMemo(() => {
+    const seen = new Set<string>();
+    for (const t of tasks) {
+      if (t.project && t.project.trim()) seen.add(t.project.trim());
+    }
+    return Array.from(seen).sort();
+  }, [tasks]);
 
   async function updateTask(id: string, updates: Partial<Task>) {
     await fetch(`/api/tasks/${id}`, {
@@ -86,11 +95,10 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
       const res = await fetch(`/api/tasks/${id}/trigger`, { method: "POST" });
       const data = await res.json();
       if (res.ok) {
-        // Optimistic update to in_progress
         const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString() };
         setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
         if (selectedTask?.id === id) setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
-        alert(`Triggered: ${data.message || "Claude is working on it."}`);
+        alert(data.message || "Claude is on it.");
       } else {
         alert(`Error: ${data.error}`);
       }
@@ -99,7 +107,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     }
   }
 
-  const visibleTasks = tasks.filter((t) => priorityFilter === "all" || t.priority === priorityFilter);
+  const visibleTasks = tasks.filter((t) => {
+    if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+    if (projectFilter !== "all" && (t.project || "") !== projectFilter) return false;
+    return true;
+  });
   const grouped = STATUSES.reduce((acc, s) => {
     acc[s] = visibleTasks
       .filter((t) => t.status === s)
@@ -118,6 +130,18 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Project filter */}
+          <select
+            value={projectFilter}
+            onChange={(e) => setProjectFilter(e.target.value)}
+            className="px-3 py-1.5 text-xs rounded-md outline-none"
+            style={{ background: projectFilter !== "all" ? "#21262d" : "transparent", border: "1px solid #30363d", color: projectFilter !== "all" ? "#e6edf3" : "#8b949e" }}
+          >
+            <option value="all">All Projects</option>
+            {availableProjects.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
           {/* Priority filter */}
           <div className="flex rounded-md overflow-hidden border" style={{ borderColor: "#30363d" }}>
             {(["all", "p0", "p1", "p2", "later"] as const).map((p, i, arr) => (
@@ -225,7 +249,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
               </div>
               {newTask.assignee === "claude" && (
                 <p className="text-xs px-3 py-2 rounded-md" style={{ background: "#d9770610", border: "1px solid #d9770630", color: "#d97706" }}>
-                  Claude will execute this task autonomously. Make the description detailed and specific.
+                  Claude will execute this autonomously. Make the description detailed and specific.
                 </p>
               )}
               <div className="flex gap-2 pt-1">
@@ -453,13 +477,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     opacity: selectedTask.status === "done" ? 0.5 : 1,
                   }}
                 >
-                  {triggering ? (
-                    <><span className="animate-spin">⟳</span> Running…</>
-                  ) : selectedTask.status === "in_progress" ? (
-                    "⟳ Re-trigger Claude"
-                  ) : (
-                    "▶ Run Now"
-                  )}
+                  {triggering ? "Triggering…" : selectedTask.status === "in_progress" ? "⟳ Re-trigger Claude" : "▶ Run Now"}
                 </button>
                 <button
                   onClick={() => updateTask(selectedTask.id, { status: "done" })}

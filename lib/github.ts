@@ -40,6 +40,13 @@ export const TRACKED_DOCS: DocFile[] = [
   { path: "docs/VPS_Infrastructure.md",           label: "VPS Infrastructure",                    group: "Infrastructure" },
   { path: "idi/README.md",                        label: "IDI API README",                        group: "Infrastructure" },
   { path: "idi/nordlayer_setup.md",               label: "Nordlayer VPN Setup",                   group: "Infrastructure" },
+  // Requirements
+  { path: "docs/REQ-mojo-daily-push.md",          label: "REQ: Mojo Daily Push",      group: "Requirements" },
+  { path: "docs/REQ-mojo-results-pull.md",        label: "REQ: Mojo Results Pull",    group: "Requirements" },
+  { path: "docs/REQ-entity-vs-human.md",          label: "REQ: Entity vs Human",      group: "Requirements" },
+  { path: "docs/REQ-skip-trace-tabs.md",          label: "REQ: Skip Trace Tabs",      group: "Requirements" },
+  { path: "docs/REQ-skip-trace-error-display.md", label: "REQ: Error Display",         group: "Requirements" },
+
   // Onboarding
   { path: "Gorjan_Day1_Agenda.md",                label: "Gorjan Day 1 Agenda",                   group: "Onboarding" },
   { path: "README.md",                            label: "Project README",                        group: "Onboarding" },

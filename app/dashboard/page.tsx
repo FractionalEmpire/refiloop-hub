@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+export const dynamic = "force-dynamic";
 import { getRecentCommits } from "@/lib/github";
 import AppShell from "@/components/AppShell";
 import { formatDistanceToNow } from "date-fns";

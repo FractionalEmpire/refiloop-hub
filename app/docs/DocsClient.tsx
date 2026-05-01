@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -17,6 +18,7 @@ const GROUP_ICONS: Record<string, string> = {
   Data: "🗄️",
   Infrastructure: "🖥️",
   Onboarding: "👋",
+  Requirements: "📋",
 };
 
 export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
@@ -29,11 +31,18 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["Operations", "Dialer", "Data", "Infrastructure", "Onboarding"]));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"]));
 
+  const searchParams = useSearchParams();
   useEffect(() => {
     fetch("/api/docs").then((r) => r.json()).then(setDocs);
   }, []);
+
+  useEffect(() => {
+    const pathParam = searchParams.get("path");
+    if (pathParam && docs.length > 0 && !selectedPath) openDoc(pathParam);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docs, searchParams]);
 
   async function openDoc(path: string) {
     setSelectedPath(path);
@@ -89,7 +98,7 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
     return acc;
   }, {} as Record<string, DocMeta[]>);
 
-  const groupOrder = ["Operations", "Dialer", "Data", "Infrastructure", "Onboarding"];
+  const groupOrder = ["Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"];
 
   function toggleGroup(g: string) {
     setExpandedGroups((prev) => {

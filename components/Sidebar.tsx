@@ -87,7 +87,7 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "#8b949e")}
           >
-            &nearr; {l.label}
+            ↗ {l.label}
           </a>
         ))}
       </div>

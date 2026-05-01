@@ -9,7 +9,7 @@ export async function PATCH(
   const body = await req.json();
   const { id } = params;
 
-  const allowed = ["title", "description", "assignee", "status", "priority", "project", "notes"];
+  const allowed = ["title", "description", "assignee", "status", "priority", "project", "notes", "type"];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) updates[key] = body[key];

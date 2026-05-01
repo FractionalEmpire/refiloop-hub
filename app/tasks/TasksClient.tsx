@@ -430,7 +430,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 onBlur={() => updateTask(selectedTask.id, { description: selectedTask.description })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Status</label>
                 <select
@@ -460,6 +460,19 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 </select>
               </div>
               <div>
+                <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Type</label>
+                <select
+                  className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
+                  style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+                  value={selectedTask.type || "task"}
+                  onChange={(e) => { const v = e.target.value; updateTask(selectedTask.id, { type: v }); setSelectedTask((p) => p ? { ...p, type: v } : null); }}
+                >
+                  <option value="task">☑ Task</option>
+                  <option value="bug">🐛 Bug</option>
+                  <option value="feature">✨ Feature</option>
+                </select>
+              </div>
+              <div>
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Assignee</label>
                 <select
                   className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
@@ -473,7 +486,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   <option value="claude">Claude (AI)</option>
                 </select>
               </div>
-              <div>
+              <div className="col-span-2">
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Project</label>
                 <input
                   className="w-full px-2 py-1.5 rounded-md text-xs outline-none"

@@ -1,3 +1,4 @@
+// Tasks CRUD endpoint — GET lists all tasks, POST creates a new task. This is a live test of the Claude autonomous executor.
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 export const dynamic = "force-dynamic";

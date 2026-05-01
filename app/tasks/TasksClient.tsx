@@ -97,20 +97,15 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
 
   async function triggerClaude(id: string) {
     setTriggering(true);
-    try {
-      const res = await fetch(`/api/tasks/${id}/trigger`, { method: "POST" });
-      const data = await res.json();
-      if (res.ok) {
-        const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString() };
-        setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
-        if (selectedTask?.id === id) setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
-        alert(data.message || "Claude is on it.");
-      } else {
-        alert(`Error: ${data.error}`);
-      }
-    } finally {
-      setTriggering(false);
-    }
+    // Update UI immediately
+    const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString() };
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
+    if (selectedTask?.id === id) setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
+    // Set status in DB (fast, don't await response body)
+    await fetch(`/api/tasks/${id}/trigger`, { method: "POST" });
+    // Fire execute directly — don't await (Claude runs up to 5 min on Vercel)
+    fetch(`/api/tasks/${id}/execute`, { method: "POST" }).catch(() => {});
+    setTriggering(false);
   }
 
   const visibleTasks = tasks.filter((t) => {

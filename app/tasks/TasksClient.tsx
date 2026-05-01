@@ -465,7 +465,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
                   style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
                   value={selectedTask.type || "task"}
-                  onChange={(e) => { const v = e.target.value; updateTask(selectedTask.id, { type: v }); setSelectedTask((p) => p ? { ...p, type: v } : null); }}
+                  onChange={(e) => { const v = e.target.value as Task["type"]; updateTask(selectedTask.id, { type: v }); setSelectedTask((p) => p ? { ...p, type: v } : null); }}
                 >
                   <option value="task">☑ Task</option>
                   <option value="bug">🐛 Bug</option>

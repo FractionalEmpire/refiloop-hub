@@ -17,6 +17,7 @@ const GROUP_ICONS: Record<string, string> = {
   Data: "🗄️",
   Infrastructure: "🖥️",
   Onboarding: "👋",
+  Requirements: "📋",
 };
 
 export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
@@ -29,7 +30,7 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["Operations", "Dialer", "Data", "Infrastructure", "Onboarding"]));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"]));
 
   useEffect(() => {
     fetch("/api/docs").then((r) => r.json()).then(setDocs);
@@ -89,7 +90,7 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
     return acc;
   }, {} as Record<string, DocMeta[]>);
 
-  const groupOrder = ["Operations", "Dialer", "Data", "Infrastructure", "Onboarding"];
+  const groupOrder = ["Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"];
 
   function toggleGroup(g: string) {
     setExpandedGroups((prev) => {

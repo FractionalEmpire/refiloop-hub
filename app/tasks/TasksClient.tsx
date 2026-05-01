@@ -1,5 +1,5 @@
-﻿"use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+"use client";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { Task } from "@/lib/supabase";
 
 const PRIORITY_LABELS: Record<string, string> = { p0: "P0", p1: "P1", p2: "P2", later: "Later" };
@@ -20,6 +20,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "david" | "gorjan">("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "p0" | "p1" | "p2" | "later">("all");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "" });
@@ -36,6 +37,15 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Derive available projects from loaded tasks
+  const availableProjects = useMemo(() => {
+    const seen = new Set<string>();
+    for (const t of tasks) {
+      if (t.project && t.project.trim()) seen.add(t.project.trim());
+    }
+    return Array.from(seen).sort();
+  }, [tasks]);
 
   async function updateTask(id: string, updates: Partial<Task>) {
     await fetch(`/api/tasks/${id}`, {
@@ -69,7 +79,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (selectedTask?.id === id) setSelectedTask(null);
   }
 
-  const visibleTasks = tasks.filter((t) => priorityFilter === "all" || t.priority === priorityFilter);
+  const visibleTasks = tasks.filter((t) => {
+    if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+    if (projectFilter !== "all" && (t.project || "") !== projectFilter) return false;
+    return true;
+  });
   const grouped = STATUSES.reduce((acc, s) => {
     acc[s] = visibleTasks
       .filter((t) => t.status === s)
@@ -88,6 +102,18 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Project filter */}
+          <select
+            value={projectFilter}
+            onChange={(e) => setProjectFilter(e.target.value)}
+            className="px-3 py-1.5 text-xs rounded-md outline-none"
+            style={{ background: projectFilter !== "all" ? "#21262d" : "transparent", border: "1px solid #30363d", color: projectFilter !== "all" ? "#e6edf3" : "#8b949e" }}
+          >
+            <option value="all">All Projects</option>
+            {availableProjects.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
           {/* Priority filter */}
           <div className="flex rounded-md overflow-hidden border" style={{ borderColor: "#30363d" }}>
             {(["all", "p0", "p1", "p2", "later"] as const).map((p, i, arr) => (
@@ -189,7 +215,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     placeholder="e.g. Infra"
                     value={newTask.project}
                     onChange={(e) => setNewTask((p) => ({ ...p, project: e.target.value }))}
+                    list="project-suggestions"
                   />
+                  <datalist id="project-suggestions">
+                    {availableProjects.map((p) => <option key={p} value={p} />)}
+                  </datalist>
                 </div>
               </div>
               <div className="flex gap-2 pt-1">
@@ -252,7 +282,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#58a6ff")}
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#30363d")}
                   >
-                    {/* Priority + Assignee */}
+                    {/* Priority + Project + Assignee */}
                     <div className="flex items-center gap-1.5 mb-2">
                       <span
                         className="text-xs font-mono px-1 py-0.5 rounded"
@@ -261,9 +291,13 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                         {PRIORITY_LABELS[task.priority]}
                       </span>
                       {task.project && (
-                        <span className="text-xs px-1 py-0.5 rounded" style={{ background: "#21262d", color: "#8b949e" }}>
+                        <button
+                          className="text-xs px-1 py-0.5 rounded"
+                          style={{ background: "#21262d", color: projectFilter === task.project ? "#58a6ff" : "#8b949e" }}
+                          onClick={(e) => { e.stopPropagation(); setProjectFilter(projectFilter === task.project ? "all" : task.project!); }}
+                        >
                           {task.project}
-                        </span>
+                        </button>
                       )}
                       <div className="ml-auto">
                         <div
@@ -381,6 +415,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   value={selectedTask.project || ""}
                   onChange={(e) => setSelectedTask((p) => p ? { ...p, project: e.target.value } : null)}
                   onBlur={() => updateTask(selectedTask.id, { project: selectedTask.project })}
+                  list="project-suggestions"
                 />
               </div>
             </div>
@@ -418,4 +453,3 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     </div>
   );
 }
-

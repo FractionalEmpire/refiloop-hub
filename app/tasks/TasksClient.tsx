@@ -430,7 +430,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 onBlur={() => updateTask(selectedTask.id, { description: selectedTask.description })}
               />
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Status</label>
                 <select

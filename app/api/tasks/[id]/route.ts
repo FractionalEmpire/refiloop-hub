@@ -9,7 +9,24 @@ export async function PATCH(
   const body = await req.json();
   const { id } = params;
 
-  const allowed = ["title", "description", "assignee", "status", "priority", "project", "notes", "type"];
+  // Force reset — clears triggered_at and last_activity_at, resets to todo
+  if (body.reset === true) {
+    const { data, error } = await supabase
+      .from("collab_tasks")
+      .update({
+        status: "todo",
+        triggered_at: null,
+        last_activity_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .select()
+      .single();
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(data);
+  }
+
+  const allowed = ["title", "description", "assignee", "status", "priority", "project", "notes", "type", "last_activity_at"];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) updates[key] = body[key];

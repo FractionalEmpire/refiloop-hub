@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.BUILDER_HUB_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY });
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "FractionalEmpire";
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL;
@@ -262,6 +262,9 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
+  const reqBody = await req.json().catch(() => ({}));
+  const model = reqBody.model || "claude-sonnet-4-6";
+
   const { data: task, error } = await supabase
     .from("collab_tasks")
     .select("*")
@@ -304,7 +307,7 @@ Get started.`;
     while (!done && iterations < MAX) {
       iterations++;
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
+        model,
         max_tokens: 4096,
         system: systemPrompt,
         tools,

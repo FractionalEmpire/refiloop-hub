@@ -42,8 +42,17 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [showRunModal, setShowRunModal] = useState(false);
+  const [runTaskId, setRunTaskId] = useState<string | null>(null);
+  const [runModel, setRunModel] = useState("claude-sonnet-4-6");
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
   const dragTaskId = useRef<string | null>(null);
+
+  const MODELS = [
+    { id: "claude-opus-4-7", label: "Opus 4.7 — most capable" },
+    { id: "claude-sonnet-4-6", label: "Sonnet 4.6 — recommended" },
+    { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 — fastest" },
+  ];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,17 +104,33 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (selectedTask?.id === id) setSelectedTask(null);
   }
 
-  async function triggerClaude(id: string) {
+  function openRunModal(id: string) {
+    setRunTaskId(id);
+    setShowRunModal(true);
+  }
+
+  async function triggerViaApi() {
+    if (!runTaskId) return;
+    setShowRunModal(false);
     setTriggering(true);
-    // Update UI immediately
-    const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString() };
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...updates } : t)));
-    if (selectedTask?.id === id) setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
-    // Set status in DB (fast, don't await response body)
-    await fetch(`/api/tasks/${id}/trigger`, { method: "POST" });
-    // Fire execute directly — don't await (Claude runs up to 5 min on Vercel)
-    fetch(`/api/tasks/${id}/execute`, { method: "POST" }).catch(() => {});
-    setTriggering(false);
+    try {
+      const res = await fetch(`/api/tasks/${runTaskId}/trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: runModel }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString() };
+        setTasks((prev) => prev.map((t) => (t.id === runTaskId ? { ...t, ...updates } : t)));
+        if (selectedTask?.id === runTaskId) setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } finally {
+      setTriggering(false);
+      setRunTaskId(null);
+    }
   }
 
   const visibleTasks = tasks.filter((t) => {
@@ -295,6 +320,51 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 </button>
                 <button
                   onClick={() => setShowNew(false)}
+                  className="px-4 py-2 rounded-md text-xs"
+                  style={{ background: "#21262d", color: "#8b949e" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Run Modal */}
+      {showRunModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "#0008" }}>
+          <div className="rounded-xl border w-full max-w-sm p-6" style={{ background: "#161b22", borderColor: "#30363d" }}>
+            <h2 className="text-sm font-semibold mb-1" style={{ color: "#e6edf3" }}>Run Now via API</h2>
+            <p className="text-xs mb-4" style={{ color: "#8b949e" }}>Claude will execute this task autonomously using the Anthropic API.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Model</label>
+                <select
+                  className="w-full px-3 py-2 rounded-md text-sm outline-none"
+                  style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+                  value={runModel}
+                  onChange={(e) => setRunModel(e.target.value)}
+                >
+                  {MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="px-3 py-2 rounded-md flex items-center gap-2" style={{ background: "#0d1117", border: "1px solid #30363d" }}>
+                <span className="text-xs" style={{ color: "#8b949e" }}>API Key</span>
+                <span className="text-xs font-mono" style={{ color: "#3fb950" }}>Builder Hub (1Password)</span>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={triggerViaApi}
+                  className="flex-1 py-2 rounded-md text-xs font-semibold"
+                  style={{ background: "#d97706", color: "#fff" }}
+                >
+                  ▶ Run Now
+                </button>
+                <button
+                  onClick={() => setShowRunModal(false)}
                   className="px-4 py-2 rounded-md text-xs"
                   style={{ background: "#21262d", color: "#8b949e" }}
                 >
@@ -514,16 +584,16 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
             {selectedTask.assignee === "claude" ? (
               <>
                 <button
-                  onClick={() => triggerClaude(selectedTask.id)}
+                  onClick={() => openRunModal(selectedTask.id)}
                   disabled={triggering || selectedTask.status === "done"}
                   className="flex-1 py-2 rounded-md text-xs font-semibold flex items-center justify-center gap-1.5"
                   style={{
                     background: triggering ? "#92400e" : "#d97706",
                     color: "#fff",
-                    opacity: selectedTask.status === "done" ? 0.5 : 1,
+                    opacity: (triggering || selectedTask.status === "done") ? 0.5 : 1,
                   }}
                 >
-                  {triggering ? "Triggering…" : selectedTask.status === "in_progress" ? "⟳ Re-trigger Claude" : "▶ Run Now"}
+                  {triggering ? "Triggering…" : selectedTask.status === "in_progress" ? "⟳ Re-trigger" : "▶ Run Now"}
                 </button>
                 <button
                   onClick={() => updateTask(selectedTask.id, { status: "done" })}

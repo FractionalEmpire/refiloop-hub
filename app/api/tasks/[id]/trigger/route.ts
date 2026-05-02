@@ -8,6 +8,8 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
+  const body = await req.json().catch(() => ({}));
+  const model = body.model || "claude-sonnet-4-6";
 
   const { data: task, error } = await supabase
     .from("collab_tasks")
@@ -29,5 +31,19 @@ export async function POST(
     })
     .eq("id", id);
 
-  return NextResponse.json({ ok: true });
+  // Fire executor — don't await (fire and forget)
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://refiloop-hub.vercel.app";
+  fetch(`${appUrl}/api/tasks/${id}/execute`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-internal-key": process.env.INTERNAL_API_KEY || "",
+    },
+    body: JSON.stringify({ model }),
+  }).catch(() => {});
+
+  return NextResponse.json({
+    ok: true,
+    message: "Claude is on it. Evidence will appear in task notes when done.",
+  });
 }

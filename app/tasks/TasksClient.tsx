@@ -282,13 +282,17 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 </div>
                 <div>
                   <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Project</label>
-                  <input
+                  <select
                     className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
                     style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                    placeholder="e.g. Hub"
                     value={newTask.project}
                     onChange={(e) => setNewTask((p) => ({ ...p, project: e.target.value }))}
-                  />
+                  >
+                    <option value="">— select —</option>
+                    {availableProjects.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Type</label>
@@ -553,13 +557,17 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
               </div>
               <div className="col-span-2">
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Project</label>
-                <input
+                <select
                   className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
                   style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
                   value={selectedTask.project || ""}
-                  onChange={(e) => setSelectedTask((p) => p ? { ...p, project: e.target.value } : null)}
-                  onBlur={() => updateTask(selectedTask.id, { project: selectedTask.project })}
-                />
+                  onChange={(e) => { updateTask(selectedTask.id, { project: e.target.value }); setSelectedTask((p) => p ? { ...p, project: e.target.value } : null); }}
+                >
+                  <option value="">— select —</option>
+                  {availableProjects.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div>

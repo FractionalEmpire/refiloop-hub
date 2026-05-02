@@ -70,6 +70,10 @@ export default function EntityPatternsClient() {
   const [showScan, setShowScan] = useState(false);
   const [scanNames, setScanNames] = useState<{ id: number; name: string }[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [scanSelected, setScanSelected] = useState<Set<string>>(new Set());
+  const [scanAction, setScanAction] = useState<Pattern["action"]>("sos_lookup");
+  const [bulkAdding, setBulkAdding] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ added: number; skipped: number } | null>(null);
 
   async function load() {
     setLoading(true);
@@ -85,6 +89,8 @@ export default function EntityPatternsClient() {
     if (scanning) return;
     setScanning(true);
     setScanNames([]);
+    setScanSelected(new Set());
+    setBulkResult(null);
     const res = await fetch("/api/entity-patterns/scan?limit=200&min_length=18");
     const data = await res.json();
     setScanNames(Array.isArray(data) ? data : []);
@@ -92,10 +98,31 @@ export default function EntityPatternsClient() {
     setShowScan(true);
   }
 
-  function pickWord(word: string) {
-    setForm((f) => ({ ...f, pattern: word }));
-    setShowAdd(true);
-    setShowScan(false);
+  function toggleScanWord(word: string) {
+    setScanSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(word)) next.delete(word); else next.add(word);
+      return next;
+    });
+  }
+
+  async function handleBulkAdd() {
+    if (scanSelected.size === 0 || bulkAdding) return;
+    setBulkAdding(true);
+    setBulkResult(null);
+    let added = 0; let skipped = 0;
+    for (const word of scanSelected) {
+      const res = await fetch("/api/entity-patterns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: word, action: scanAction, category: "entity_suffix", match_type: "contains" }),
+      });
+      if (res.ok) added++; else skipped++;
+    }
+    setBulkAdding(false);
+    setBulkResult({ added, skipped });
+    setScanSelected(new Set());
+    load(); // refresh pattern list
   }
 
   async function handleAdd() {
@@ -193,38 +220,76 @@ export default function EntityPatternsClient() {
       {/* Scan panel */}
       {showScan && scanNames.length > 0 && (
         <div className="mb-6 rounded-lg border" style={{ background: "#0d1117", borderColor: "#30363d" }}>
-          <div className="flex items-center justify-between px-4 py-2 border-b" style={{ borderColor: "#21262d" }}>
-            <span className="text-xs font-semibold" style={{ color: "#8b949e" }}>
-              LONGEST INDIVIDUAL NAMES — {scanNames.length} results · click a word to add as pattern
+          {/* Panel header */}
+          <div className="flex items-center gap-3 px-4 py-2.5 border-b flex-wrap" style={{ borderColor: "#21262d" }}>
+            <span className="text-xs font-semibold flex-1" style={{ color: "#8b949e" }}>
+              SCAN RESULTS — {scanNames.length} longest individual names · click words to select
             </span>
-            <button onClick={() => setShowScan(false)} className="text-xs" style={{ color: "#484f58" }}>✕</button>
+            {scanSelected.size > 0 && (
+              <>
+                <select
+                  value={scanAction}
+                  onChange={(e) => setScanAction(e.target.value as Pattern["action"])}
+                  className="text-xs rounded px-2 py-1"
+                  style={{ background: "#161b22", border: "1px solid #30363d", color: "#e6edf3" }}
+                >
+                  <option value="sos_lookup">SOS Lookup</option>
+                  <option value="exclude">Exclude</option>
+                  <option value="flag_for_review">Flag</option>
+                </select>
+                <button
+                  onClick={handleBulkAdd}
+                  disabled={bulkAdding}
+                  className="text-xs px-3 py-1 rounded font-medium"
+                  style={{ background: "#238636", color: "#fff", opacity: bulkAdding ? 0.6 : 1 }}
+                >
+                  {bulkAdding ? "Adding…" : `Add ${scanSelected.size} selected`}
+                </button>
+                <button
+                  onClick={() => setScanSelected(new Set())}
+                  className="text-xs px-2 py-1 rounded"
+                  style={{ background: "#21262d", color: "#8b949e" }}
+                >
+                  Clear
+                </button>
+              </>
+            )}
+            {bulkResult && (
+              <span className="text-xs" style={{ color: "#3fb950" }}>
+                ✓ Added {bulkResult.added}{bulkResult.skipped > 0 ? `, ${bulkResult.skipped} skipped (already exist)` : ""}
+              </span>
+            )}
+            <button onClick={() => { setShowScan(false); setScanSelected(new Set()); setBulkResult(null); }} className="text-xs" style={{ color: "#484f58" }}>✕</button>
           </div>
-          <div className="overflow-y-auto" style={{ maxHeight: "22rem" }}>
+
+          {/* Name rows */}
+          <div className="overflow-y-auto" style={{ maxHeight: "24rem" }}>
             {scanNames.map((row) => {
               const knownPatterns = new Set(patterns.map((p) => p.pattern));
               const words = row.name.split(/\s+/).filter((w) => w.length >= 3 && !SKIP_WORDS.has(w.toUpperCase()));
               return (
-                <div key={row.id} className="px-4 py-2 border-b flex items-baseline gap-2 flex-wrap" style={{ borderColor: "#161b22" }}>
-                  <span className="text-xs shrink-0" style={{ color: "#484f58", minWidth: "2rem" }}>{row.name.length}</span>
+                <div key={row.id} className="px-4 py-2 border-b flex items-center gap-2 flex-wrap" style={{ borderColor: "#161b22" }}>
+                  <span className="text-xs shrink-0 w-6 text-right" style={{ color: "#484f58" }}>{row.name.length}</span>
                   {words.map((w, i) => {
                     const up = w.toUpperCase();
                     const known = knownPatterns.has(up);
+                    const selected = scanSelected.has(up);
                     return (
                       <button
                         key={i}
-                        onClick={() => !known && pickWord(up)}
+                        onClick={() => !known && toggleScanWord(up)}
                         disabled={known}
-                        className="text-xs font-mono px-1.5 py-0.5 rounded"
+                        className="text-xs font-mono px-1.5 py-0.5 rounded transition-colors"
                         style={{
-                          background: known ? "#161b22" : "#21262d",
-                          color: known ? "#484f58" : "#e6edf3",
-                          border: `1px solid ${known ? "#1c2128" : "#30363d"}`,
+                          background: known ? "#0d1117" : selected ? "#1a3a1a" : "#21262d",
+                          color: known ? "#484f58" : selected ? "#3fb950" : "#e6edf3",
+                          border: `1px solid ${known ? "#1c2128" : selected ? "#3fb950" : "#30363d"}`,
                           cursor: known ? "default" : "pointer",
                           textDecoration: known ? "line-through" : "none",
                         }}
-                        title={known ? `"${up}" already in patterns` : `Add "${up}" as pattern`}
+                        title={known ? `"${up}" already in patterns` : selected ? `Deselect "${up}"` : `Select "${up}"`}
                       >
-                        {w}
+                        {selected && <span className="mr-1">✓</span>}{w}
                       </button>
                     );
                   })}

@@ -11,6 +11,39 @@ type FilterRule = {
   updated_by: string;
 };
 
+type FunnelData = {
+  raw_capitalize: number;
+  imported_loans: number;
+  after_active: number;
+  after_state_not_null: number;
+  after_blocked_states: number;
+  after_loan_amount: number;
+  after_maturity: number;
+  qualified_loans: number;
+  total_slots: number;
+  pending_skip_trace: number;
+};
+
+type FunnelStep = {
+  label: string;
+  key: keyof FunnelData;
+  sublabel?: string;
+  divider?: boolean; // visual break before this row
+};
+
+const FUNNEL_STEPS: FunnelStep[] = [
+  { label: "Raw Capitalize data", key: "raw_capitalize", sublabel: "raw_capitalize_scrape table" },
+  { label: "Imported to loans table", key: "imported_loans", sublabel: "deduped by capitalize_id", divider: true },
+  { label: "Active loans", key: "after_active", sublabel: "is_active = true" },
+  { label: "Has state", key: "after_state_not_null", sublabel: "state IS NOT NULL" },
+  { label: "Not blocked state", key: "after_blocked_states", sublabel: "excl. CA NY NJ MN AZ NV IL MA CT OR WA" },
+  { label: "Loan amount in range", key: "after_loan_amount", sublabel: "$500K – $10M" },
+  { label: "Maturity in window", key: "after_maturity", sublabel: "60 – 365 days out" },
+  { label: "Property type ok", key: "qualified_loans", sublabel: "excluded types removed — qualified loans", divider: true },
+  { label: "Skip-trace slots (all)", key: "total_slots", sublabel: "v_airtable_push — owners + entity officers" },
+  { label: "Pending skip trace", key: "pending_skip_trace", sublabel: "skip_trace_done = false" },
+];
+
 const GROUPS: { label: string; keys: string[] }[] = [
   {
     label: "Lead Eligibility",
@@ -57,6 +90,91 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+function fmtNum(n: number) {
+  return n.toLocaleString();
+}
+
+function FilterFunnel({ data }: { data: FunnelData }) {
+  const top = data.raw_capitalize;
+
+  return (
+    <div className="mb-10 rounded-xl overflow-hidden" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+      <div className="px-5 pt-4 pb-3 border-b" style={{ borderColor: "#21262d" }}>
+        <div className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Filter Funnel</div>
+        <div className="text-xs mt-0.5" style={{ color: "#8b949e" }}>
+          How we get from {fmtNum(data.raw_capitalize)} raw records → {fmtNum(data.pending_skip_trace)} pending skip trace
+        </div>
+      </div>
+
+      <div className="px-5 py-3 space-y-0.5">
+        {FUNNEL_STEPS.map((step, i) => {
+          const count = data[step.key];
+          const prevStep = FUNNEL_STEPS[i - 1];
+          const prevCount = prevStep ? data[prevStep.key] : null;
+          const dropped = prevCount !== null ? prevCount - count : 0;
+          const pct = top > 0 ? (count / top) * 100 : 0;
+
+          // Determine bar color: getting smaller = dimmer blue; slot steps = amber
+          const isSlotStep = step.key === "total_slots" || step.key === "pending_skip_trace";
+          const barColor = isSlotStep ? "#b45309" : "#1f6feb";
+          const barBg = isSlotStep ? "#271c0a" : "#0d1117";
+
+          return (
+            <div key={step.key}>
+              {step.divider && i > 0 && (
+                <div className="my-3 border-t" style={{ borderColor: "#21262d" }} />
+              )}
+              <div className="flex items-center gap-3 py-1.5">
+                {/* Label */}
+                <div className="w-52 shrink-0">
+                  <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{step.label}</div>
+                  {step.sublabel && (
+                    <div className="text-xs" style={{ color: "#484f58" }}>{step.sublabel}</div>
+                  )}
+                </div>
+
+                {/* Bar */}
+                <div className="flex-1 rounded" style={{ background: barBg, height: 18 }}>
+                  <div
+                    className="h-full rounded transition-all duration-300"
+                    style={{
+                      width: `${Math.max(pct, 0.3)}%`,
+                      background: barColor,
+                      opacity: 0.85,
+                    }}
+                  />
+                </div>
+
+                {/* Count */}
+                <div className="w-24 text-right shrink-0">
+                  <span className="text-sm font-mono font-semibold" style={{ color: "#e6edf3" }}>
+                    {fmtNum(count)}
+                  </span>
+                </div>
+
+                {/* Dropped */}
+                <div className="w-28 text-right shrink-0">
+                  {dropped > 0 ? (
+                    <span className="text-xs font-mono" style={{ color: "#f85149" }}>
+                      −{fmtNum(dropped)}
+                    </span>
+                  ) : (
+                    <span className="text-xs" style={{ color: "#484f58" }}>—</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="px-5 py-2 border-t text-xs" style={{ borderColor: "#21262d", color: "#484f58" }}>
+        Counts are live from Supabase. Slot counts reflect the current <code style={{ color: "#8b949e" }}>v_airtable_push</code> materialized view (refreshed daily at 06:00 UTC).
+      </div>
+    </div>
+  );
+}
+
 export default function FiltersClient() {
   const [rules, setRules] = useState<FilterRule[]>([]);
   const [editing, setEditing] = useState<Record<number, string>>({});
@@ -64,11 +182,21 @@ export default function FiltersClient() {
   const [saved, setSaved] = useState<Record<number, boolean>>({});
   const [error, setError] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
+  const [funnel, setFunnel] = useState<FunnelData | null>(null);
+  const [funnelError, setFunnelError] = useState(false);
 
   useEffect(() => {
     fetch("/api/filters")
       .then((r) => r.json())
       .then((data) => { setRules(data); setLoading(false); });
+
+    fetch("/api/filters/funnel")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) setFunnelError(true);
+        else setFunnel(data);
+      })
+      .catch(() => setFunnelError(true));
   }, []);
 
   function startEdit(rule: FilterRule) {
@@ -126,6 +254,19 @@ export default function FiltersClient() {
           Changes take effect immediately — the dialer queue and skip-trace cron read these on every run.
         </p>
       </div>
+
+      {/* Funnel */}
+      {funnel ? (
+        <FilterFunnel data={funnel} />
+      ) : funnelError ? (
+        <div className="mb-8 p-3 rounded-lg text-sm border" style={{ background: "#161b22", borderColor: "#21262d", color: "#8b949e" }}>
+          Could not load funnel counts.
+        </div>
+      ) : (
+        <div className="mb-8 p-4 rounded-xl text-xs" style={{ background: "#161b22", border: "1px solid #21262d", color: "#484f58" }}>
+          Loading funnel…
+        </div>
+      )}
 
       {/* Discrepancy warning */}
       {hasDiscrepancy && (

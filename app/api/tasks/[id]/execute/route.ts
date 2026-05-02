@@ -290,7 +290,7 @@ Deployment context (IMPORTANT — default branches):
 
 Rules:
 1. Start by calling log_progress with your understanding of the task and your plan. If the task specifies a file path, use it directly — do not search.
-2. Read any files you need before modifying them.
+2. When you need to read multiple files, call github_read_file for all of them in the same step — do not read one at a time sequentially. This saves iterations.
 3. Make minimal changes. Read the file, apply only the necessary edits, write back the complete file. Never rewrite a file from scratch when a small targeted change will do — this saves tokens and avoids timeouts.
 4. Call log_progress frequently to show your work.
 5. Always end with complete_task (success) or mark_blocked (can't finish).
@@ -309,7 +309,7 @@ Get started.`;
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userContent }];
   let done = false;
   let iterations = 0;
-  const MAX = 12;
+  const MAX = 20;
 
   try {
     while (!done && iterations < MAX) {

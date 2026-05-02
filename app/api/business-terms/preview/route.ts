@@ -25,7 +25,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "term body required after _" }, { status: 400 });
   }
 
-  const upper = searchTerm.toUpperCase();
+  // Normalize: any _ inside the term body is treated as a space separator.
+  // So _bank_ → BANK, _land_group → LAND GROUP, land_group → LAND GROUP
+  const upper = searchTerm.replace(/_/g, " ").trim().toUpperCase();
 
   // Build PostgREST filter.
   // ~* is PostgreSQL case-insensitive regex operator in PostgREST.

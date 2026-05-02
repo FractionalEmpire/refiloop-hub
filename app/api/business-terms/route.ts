@@ -44,8 +44,10 @@ export async function POST(req: NextRequest) {
   // Derive the pattern for owner_name_patterns.
   // _Land → strip _ → LAND, stored with match_type 'word_boundary' (regex \mLAND\M)
   // develop → DEVELOP, stored with match_type 'word_start' (regex \mDEVELOP — catches DEVELOPER etc.)
+  // _ at start = word-boundary flag; _ anywhere else = space separator.
+  // e.g. _bank_ → BANK, _land_group → LAND GROUP, develop → DEVELOP
   const isWordBoundary = trimmed.startsWith("_");
-  const pattern = (isWordBoundary ? trimmed.slice(1) : trimmed).toUpperCase();
+  const pattern = (isWordBoundary ? trimmed.slice(1) : trimmed).replace(/_/g, " ").trim().toUpperCase();
   const matchType = isWordBoundary ? "word_boundary" : "word_start";
 
   // Best-effort insert into owner_name_patterns — don't fail the whole request if already there
@@ -79,7 +81,7 @@ export async function DELETE(req: NextRequest) {
   // Best-effort delete from owner_name_patterns
   if (term) {
     const isWordBoundary = (term as string).startsWith("_");
-    const pattern = (isWordBoundary ? (term as string).slice(1) : (term as string)).toUpperCase();
+    const pattern = (isWordBoundary ? (term as string).slice(1) : (term as string)).replace(/_/g, " ").trim().toUpperCase();
     await fetch(
       `${SUPABASE_URL}/rest/v1/owner_name_patterns?pattern=eq.${encodeURIComponent(pattern)}&notes=like.*refiloop-hub*`,
       { method: "DELETE", headers: h() }

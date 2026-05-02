@@ -158,86 +158,43 @@ export default function EntityPatternsClient() {
           className="mb-6 p-4 rounded-lg border"
           style={{ background: "#161b22", borderColor: "#58a6ff44" }}
         >
-          <div className="text-sm font-medium mb-3" style={{ color: "#e6edf3" }}>New Pattern</div>
-          <div className="grid grid-cols-2 gap-3 mb-3">
-            <div>
-              <label className="text-xs mb-1 block" style={{ color: "#8b949e" }}>Pattern (auto-uppercased)</label>
-              <input
-                value={form.pattern}
-                onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
-                placeholder="e.g. LLC"
-                className="w-full text-sm rounded px-2 py-1.5 font-mono"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-              />
-            </div>
-            <div>
-              <label className="text-xs mb-1 block" style={{ color: "#8b949e" }}>Action</label>
-              <select
-                value={form.action}
-                onChange={(e) => setForm((f) => ({ ...f, action: e.target.value as Pattern["action"] }))}
-                className="w-full text-sm rounded px-2 py-1.5"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-              >
-                <option value="sos_lookup">SOS Lookup (entity)</option>
-                <option value="exclude">Exclude (not a borrower)</option>
-                <option value="flag_for_review">Flag for Review</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs mb-1 block" style={{ color: "#8b949e" }}>Category</label>
-              <select
-                value={form.category}
-                onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                className="w-full text-sm rounded px-2 py-1.5"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-              >
-                <option value="entity_suffix">Entity Suffix</option>
-                <option value="business_activity">Business Activity</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs mb-1 block" style={{ color: "#8b949e" }}>Match Type</label>
-              <select
-                value={form.match_type}
-                onChange={(e) => setForm((f) => ({ ...f, match_type: e.target.value as Pattern["match_type"] }))}
-                className="w-full text-sm rounded px-2 py-1.5"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-              >
-                <option value="contains">Contains (word boundary)</option>
-                <option value="exact">Exact match</option>
-              </select>
-            </div>
-          </div>
-          <div className="mb-3">
-            <label className="text-xs mb-1 block" style={{ color: "#8b949e" }}>Notes (optional)</label>
+          <div className="flex gap-2 items-center">
             <input
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              placeholder="Why was this added?"
-              className="w-full text-sm rounded px-2 py-1.5"
+              autoFocus
+              value={form.pattern}
+              onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+              placeholder="Pattern (e.g. LLC, CHURCH)"
+              className="flex-1 text-sm rounded px-3 py-2 font-mono"
               style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+              onKeyDown={(e) => e.key === "Enter" && handleAdd()}
             />
-          </div>
-          {addError && <div className="text-xs mb-2" style={{ color: "#f85149" }}>{addError}</div>}
-          <div className="flex gap-2">
+            <select
+              value={form.action}
+              onChange={(e) => setForm((f) => ({ ...f, action: e.target.value as Pattern["action"] }))}
+              className="text-sm rounded px-2 py-2"
+              style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+            >
+              <option value="sos_lookup">SOS Lookup</option>
+              <option value="exclude">Exclude</option>
+              <option value="flag_for_review">Flag</option>
+            </select>
             <button
               onClick={handleAdd}
               disabled={adding}
-              className="text-xs px-3 py-1.5 rounded font-medium"
+              className="text-sm px-4 py-2 rounded font-medium shrink-0"
               style={{ background: "#238636", color: "#fff", opacity: adding ? 0.6 : 1 }}
             >
-              {adding ? "Saving…" : "Save Pattern"}
+              {adding ? "…" : "Add"}
             </button>
             <button
               onClick={() => { setShowAdd(false); setForm(BLANK_FORM); setAddError(""); }}
-              className="text-xs px-3 py-1.5 rounded"
+              className="text-sm px-3 py-2 rounded shrink-0"
               style={{ background: "#21262d", color: "#8b949e" }}
             >
-              Cancel
+              ✕
             </button>
           </div>
+          {addError && <div className="text-xs mt-2" style={{ color: "#f85149" }}>{addError}</div>}
         </div>
       )}
 

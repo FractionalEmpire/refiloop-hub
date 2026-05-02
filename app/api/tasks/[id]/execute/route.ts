@@ -28,7 +28,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "github_write_file",
-    description: "Create or update a file in a GitHub repository (commits directly to main)",
+    description: "Create or update a file in a GitHub repository",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -36,6 +36,7 @@ const tools: Anthropic.Tool[] = [
         path: { type: "string" },
         content: { type: "string", description: "Full file content (UTF-8)" },
         message: { type: "string", description: "Commit message (will be prefixed with [Claude])" },
+        branch: { type: "string", description: "Branch to commit to (default: main). Use this when the task specifies a branch." },
       },
       required: ["repo", "path", "content", "message"],
     },
@@ -152,10 +153,11 @@ async function runTool(
     }
 
     case "github_write_file": {
-      // Get existing SHA if file exists
+      const branch = input.branch || "main";
+      // Get existing SHA if file exists on target branch
       let sha: string | undefined;
       const existing = await fetch(
-        `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}`,
+        `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${branch}`,
         { headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" } }
       );
       if (existing.ok) {
@@ -166,6 +168,7 @@ async function runTool(
       const body: Record<string, string | undefined> = {
         message: `[Claude] ${input.message}`,
         content: Buffer.from(input.content).toString("base64"),
+        branch,
         sha,
       };
       if (!sha) delete body.sha;
@@ -184,7 +187,7 @@ async function runTool(
       );
       if (!res.ok) return { result: `HTTP ${res.status}: ${await res.text()}` };
       const data = await res.json() as { commit: { html_url: string } };
-      return { result: `Committed: ${data.commit.html_url}` };
+      return { result: `Committed to ${branch}: ${data.commit.html_url}` };
     }
 
     case "github_list_files": {
@@ -280,10 +283,15 @@ Key repos:
 - refiloop-hub: Internal ops hub (Next.js on Vercel). API routes in app/api/, pages in app/, components in components/, types in lib/.
 - refiloop2: Main config repo with docs, supabase functions, scripts.
 
+Deployment context (IMPORTANT — default branches):
+- refiloop-hub: commit to main (Vercel auto-deploys)
+- skip-trace-ui / any task mentioning skip trace UI: commit to branch client-review-skip-trace (production is promoted from preview builds of that branch, NOT main)
+- If the task description specifies a branch field, always use that branch.
+
 Rules:
-1. Start by calling log_progress with your understanding of the task and your plan.
+1. Start by calling log_progress with your understanding of the task and your plan. If the task specifies a file path, use it directly — do not search.
 2. Read any files you need before modifying them.
-3. When writing files, write the complete file content (not diffs).
+3. Make minimal changes. Read the file, apply only the necessary edits, write back the complete file. Never rewrite a file from scratch when a small targeted change will do — this saves tokens and avoids timeouts.
 4. Call log_progress frequently to show your work.
 5. Always end with complete_task (success) or mark_blocked (can't finish).
 6. The complete_task summary is what David sees — include commit URLs, what changed, and proof it works.`;
@@ -294,7 +302,7 @@ Rules:
 **Description:** ${task.description || "(none — use the title to infer what's needed)"}
 **Project:** ${task.project || "RefiLoop Hub"}
 **Priority:** ${task.priority}
-**Existing notes:** ${task.notes || "(none)"}
+**Existing notes:** ${task.notes || "(none)"}${task.context ? `\n**Context (file paths, branch, etc.):** ${task.context}` : ""}
 
 Get started.`;
 

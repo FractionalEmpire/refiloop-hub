@@ -41,6 +41,15 @@ function formatElapsed(triggeredAt: string, now: number): { label: string; color
   return { label: `${h}h ${rm}m`, color };
 }
 
+function formatAgo(ts: string, now: number): string {
+  const secs = Math.floor((now - new Date(ts).getTime()) / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const m = Math.floor(secs / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m ago`;
+}
+
 export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -609,6 +618,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 Triggered: {new Date(selectedTask.triggered_at).toLocaleString()}
               </p>
             )}
+            {selectedTask.last_activity_at && selectedTask.status === "in_progress" && (
+              <p className="text-xs" style={{ color: "#484f58" }}>
+                Last action: <span style={{ color: "#8b949e" }}>{formatAgo(selectedTask.last_activity_at, now)}</span>
+              </p>
+            )}
             {selectedTask.triggered_at && selectedTask.assignee === "claude" && selectedTask.status === "in_progress" && (() => {
               const elapsed = formatElapsed(selectedTask.triggered_at, now);
               return (
@@ -642,6 +656,25 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 >
                   ✓ Done
                 </button>
+                {selectedTask.status === "in_progress" && (
+                  <button
+                    onClick={async () => {
+                      if (!confirm("Force reset this task to todo? Use this if Claude appears hung.")) return;
+                      await fetch(`/api/tasks/${selectedTask.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ reset: true }),
+                      });
+                      const updates = { status: "todo" as Task["status"], triggered_at: null, last_activity_at: null };
+                      setTasks((prev) => prev.map((t) => (t.id === selectedTask.id ? { ...t, ...updates } : t)));
+                      setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
+                    }}
+                    className="px-3 py-2 rounded-md text-xs font-semibold"
+                    style={{ background: "#21262d", color: "#f85149", border: "1px solid #f8514930" }}
+                  >
+                    ↺ Reset
+                  </button>
+                )}
               </>
             ) : (
               <button

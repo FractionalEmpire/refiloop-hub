@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { getCurrentUser } from "@/lib/auth";
+import AppShell from "@/components/AppShell";
 
 export const metadata: Metadata = {
   title: "RefiLoop Hub",
@@ -11,9 +13,17 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const user = getCurrentUser();
+
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {user ? (
+          <AppShell user={user}>{children}</AppShell>
+        ) : (
+          children
+        )}
+      </body>
     </html>
   );
 }

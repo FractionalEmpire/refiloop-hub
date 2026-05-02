@@ -111,7 +111,7 @@ export default function EntityPatternsClient() {
     setBulkAdding(true);
     setBulkResult(null);
     let added = 0; let skipped = 0;
-    for (const word of scanSelected) {
+    for (const word of Array.from(scanSelected)) {
       const res = await fetch("/api/entity-patterns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

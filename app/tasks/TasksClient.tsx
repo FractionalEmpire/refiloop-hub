@@ -30,6 +30,17 @@ const ASSIGNEE_LABEL: Record<string, string> = {
   david: "D", gorjan: "G", both: "B", claude: "C",
 };
 
+
+function formatElapsed(triggeredAt: string, now: number): { label: string; color: string } {
+  const secs = Math.floor((now - new Date(triggeredAt).getTime()) / 1000);
+  const color = secs < 300 ? "#d97706" : secs < 900 ? "#f0883e" : "#f85149";
+  if (secs < 60) return { label: `${secs}s`, color };
+  const m = Math.floor(secs / 60), s = secs % 60;
+  if (m < 60) return { label: s > 0 ? `${m}m ${s}s` : `${m}m`, color };
+  const h = Math.floor(m / 60), rm = m % 60;
+  return { label: `${h}h ${rm}m`, color };
+}
+
 export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,6 +58,12 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [runModel, setRunModel] = useState("claude-sonnet-4-6");
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
   const dragTaskId = useRef<string | null>(null);
+
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const MODELS = [
     { id: "claude-opus-4-7", label: "Opus 4.7 — most capable" },
@@ -431,11 +448,16 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                           {task.project}
                         </span>
                       )}
-                      {task.assignee === "claude" && task.status === "in_progress" && (
-                        <span className="text-xs px-1 py-0.5 rounded animate-pulse" style={{ background: "#d9770620", color: "#d97706" }}>
-                          working…
-                        </span>
-                      )}
+                      {task.assignee === "claude" && task.status === "in_progress" && (() => {
+                        const elapsed = task.triggered_at ? formatElapsed(task.triggered_at, now) : null;
+                        return (
+                          <span className="text-xs px-1.5 py-0.5 rounded font-mono flex items-center gap-1"
+                            style={{ background: elapsed ? `${elapsed.color}18` : "#d9770618", color: elapsed?.color || "#d97706", border: `1px solid ${elapsed?.color || "#d97706"}30` }}>
+                            <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: elapsed?.color || "#d97706" }} />
+                            {elapsed ? elapsed.label : "working…"}
+                          </span>
+                        );
+                      })()}
                       <div className="ml-auto">
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
@@ -587,6 +609,16 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 Triggered: {new Date(selectedTask.triggered_at).toLocaleString()}
               </p>
             )}
+            {selectedTask.triggered_at && selectedTask.assignee === "claude" && selectedTask.status === "in_progress" && (() => {
+              const elapsed = formatElapsed(selectedTask.triggered_at, now);
+              return (
+                <div className="flex items-center gap-2 px-2 py-1.5 rounded-md" style={{ background: `${elapsed.color}12`, border: `1px solid ${elapsed.color}30` }}>
+                  <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: elapsed.color }} />
+                  <span className="text-xs font-mono font-semibold" style={{ color: elapsed.color }}>{elapsed.label} elapsed</span>
+                  <span className="text-xs ml-auto" style={{ color: "#484f58" }}>{elapsed.color === "#f85149" ? "⚠ may be hung" : "working"}</span>
+                </div>
+              );
+            })()}
           </div>
           <div className="px-5 py-4 border-t flex gap-2" style={{ borderColor: "#30363d" }}>
             {selectedTask.assignee === "claude" ? (

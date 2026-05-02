@@ -48,6 +48,12 @@ function fmtBadge(action: string) {
   );
 }
 
+// Words to skip when tokenizing scan results — short words and common first/last name components
+const SKIP_WORDS = new Set([
+  "THE","AND","OF","A","AN","IN","AT","BY","FOR","TO","OR","DE","LA","EL","LOS","LAS","DBA",
+  "JR","SR","II","III","IV","MR","MRS","DR","EST","ETAL","ET","AL","C/O",
+]);
+
 export default function EntityPatternsClient() {
   const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +66,11 @@ export default function EntityPatternsClient() {
   const [search, setSearch] = useState("");
   const [filterAction, setFilterAction] = useState<"all" | Pattern["action"]>("all");
 
+  // Scan state
+  const [showScan, setShowScan] = useState(false);
+  const [scanNames, setScanNames] = useState<{ id: number; name: string }[]>([]);
+  const [scanning, setScanning] = useState(false);
+
   async function load() {
     setLoading(true);
     const res = await fetch("/api/entity-patterns");
@@ -69,6 +80,23 @@ export default function EntityPatternsClient() {
   }
 
   useEffect(() => { load(); }, []);
+
+  async function handleScan() {
+    if (scanning) return;
+    setScanning(true);
+    setScanNames([]);
+    const res = await fetch("/api/entity-patterns/scan?limit=200&min_length=18");
+    const data = await res.json();
+    setScanNames(Array.isArray(data) ? data : []);
+    setScanning(false);
+    setShowScan(true);
+  }
+
+  function pickWord(word: string) {
+    setForm((f) => ({ ...f, pattern: word }));
+    setShowAdd(true);
+    setShowScan(false);
+  }
 
   async function handleAdd() {
     if (!form.pattern.trim()) { setAddError("Pattern is required"); return; }
@@ -143,14 +171,72 @@ export default function EntityPatternsClient() {
             Changes take effect on the next classifier run.
           </p>
         </div>
-        <button
-          onClick={() => { setShowAdd((v) => !v); setAddError(""); }}
-          className="text-sm px-4 py-2 rounded-md font-medium shrink-0"
-          style={{ background: "#238636", color: "#fff" }}
-        >
-          + Add Pattern
-        </button>
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            className="text-sm px-3 py-2 rounded-md font-medium"
+            style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d", opacity: scanning ? 0.6 : 1 }}
+          >
+            {scanning ? "Scanning…" : "🔍 Scan DB"}
+          </button>
+          <button
+            onClick={() => { setShowAdd((v) => !v); setAddError(""); setShowScan(false); }}
+            className="text-sm px-4 py-2 rounded-md font-medium"
+            style={{ background: "#238636", color: "#fff" }}
+          >
+            + Add Pattern
+          </button>
+        </div>
       </div>
+
+      {/* Scan panel */}
+      {showScan && scanNames.length > 0 && (
+        <div className="mb-6 rounded-lg border" style={{ background: "#0d1117", borderColor: "#30363d" }}>
+          <div className="flex items-center justify-between px-4 py-2 border-b" style={{ borderColor: "#21262d" }}>
+            <span className="text-xs font-semibold" style={{ color: "#8b949e" }}>
+              LONGEST INDIVIDUAL NAMES — {scanNames.length} results · click a word to add as pattern
+            </span>
+            <button onClick={() => setShowScan(false)} className="text-xs" style={{ color: "#484f58" }}>✕</button>
+          </div>
+          <div className="overflow-y-auto" style={{ maxHeight: "22rem" }}>
+            {scanNames.map((row) => {
+              const knownPatterns = new Set(patterns.map((p) => p.pattern));
+              const words = row.name.split(/\s+/).filter((w) => w.length >= 3 && !SKIP_WORDS.has(w.toUpperCase()));
+              return (
+                <div key={row.id} className="px-4 py-2 border-b flex items-baseline gap-2 flex-wrap" style={{ borderColor: "#161b22" }}>
+                  <span className="text-xs shrink-0" style={{ color: "#484f58", minWidth: "2rem" }}>{row.name.length}</span>
+                  {words.map((w, i) => {
+                    const up = w.toUpperCase();
+                    const known = knownPatterns.has(up);
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => !known && pickWord(up)}
+                        disabled={known}
+                        className="text-xs font-mono px-1.5 py-0.5 rounded"
+                        style={{
+                          background: known ? "#161b22" : "#21262d",
+                          color: known ? "#484f58" : "#e6edf3",
+                          border: `1px solid ${known ? "#1c2128" : "#30363d"}`,
+                          cursor: known ? "default" : "pointer",
+                          textDecoration: known ? "line-through" : "none",
+                        }}
+                        title={known ? `"${up}" already in patterns` : `Add "${up}" as pattern`}
+                      >
+                        {w}
+                      </button>
+                    );
+                  })}
+                  {words.length === 0 && (
+                    <span className="text-xs font-mono" style={{ color: "#484f58" }}>{row.name}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Add form */}
       {showAdd && (

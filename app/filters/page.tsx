@@ -1,14 +1,9 @@
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import AppShell from "@/components/AppShell";
 import FiltersClient from "./FiltersClient";
 
 export default async function FiltersPage() {
   const user = getCurrentUser();
   if (!user) redirect("/login");
-  return (
-    <AppShell user={user}>
-      <FiltersClient />
-    </AppShell>
-  );
+  return <FiltersClient />;
 }

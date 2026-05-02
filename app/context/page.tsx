@@ -1,15 +1,10 @@
 ﻿import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import AppShell from "@/components/AppShell";
 
 export default async function ContextPage() {
   const user = getCurrentUser();
   if (!user) redirect("/login");
-  return (
-    <AppShell user={user}>
-      <ContextContent user={user} />
-    </AppShell>
-  );
+  return <ContextContent user={user} />;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

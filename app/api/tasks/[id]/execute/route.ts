@@ -341,6 +341,8 @@ Get started.`;
         if (result.terminal) { done = true; break; }
       }
 
+      // Heartbeat — lets the hub detect if Claude is still working vs hung
+      await supabase.from("collab_tasks").update({ last_activity_at: new Date().toISOString() }).eq("id", id);
       messages.push({ role: "user", content: toolResults });
     }
 

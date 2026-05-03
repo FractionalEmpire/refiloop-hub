@@ -26,6 +26,14 @@ type FunnelData = {
   ql_no_owner: number;
   total_slots: number;
   pending_skip_trace: number;
+  // Enrichment pipeline — unique owner/entity counts
+  individual_slots: number;
+  entity_slots: number;
+  ind_owners_skip_pending: number;
+  ind_owners_skip_done: number;
+  ind_owners_has_phone: number;
+  ent_veil_pierced: number;
+  ent_skip_pending: number;
 };
 
 const GROUPS: { label: string; keys: string[] }[] = [
@@ -174,6 +182,82 @@ function OwnerBreakdown({ data }: { data: FunnelData }) {
   );
 }
 
+// ─── Enrichment pipeline ─────────────────────────────────────────────────────
+function EnrichStage({ label, count, hint, accent }: { label: string; count: number; hint?: string; accent?: boolean }) {
+  return (
+    <div
+      className="rounded-md px-3 py-2 shrink-0"
+      style={{
+        minWidth: "7rem",
+        background: accent ? "#0d2818" : "#0d1117",
+        border: `1px solid ${accent ? "#1a4731" : "#21262d"}`,
+      }}
+    >
+      <div className="text-[10px] uppercase tracking-wider" style={{ color: "#8b949e" }}>{label}</div>
+      <div className="mt-0.5 text-lg font-semibold tabular-nums" style={{ color: "#e6edf3" }}>{n(count ?? 0)}</div>
+      {hint && <div className="mt-0.5 text-[10px]" style={{ color: "#484f58" }}>{hint}</div>}
+    </div>
+  );
+}
+
+function EnrichmentPipeline({ data }: { data: FunnelData }) {
+  const indTotal = data.individual_slots ?? 0;
+  const entTotal = data.entity_slots ?? 0;
+  if (!indTotal && !entTotal) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t" style={{ borderColor: "#21262d" }}>
+      <div className="text-xs font-semibold mb-0.5" style={{ color: "#8b949e" }}>
+        Skip-trace enrichment pipeline
+      </div>
+      <div className="text-xs mb-4" style={{ color: "#484f58" }}>
+        Unique <strong style={{ color: "#e6edf3" }}>owners</strong> / <strong style={{ color: "#e6edf3" }}>entities</strong> at each stage — not loan counts.
+        One owner can hold multiple qualified loans.
+      </div>
+
+      {/* Individual enrichment */}
+      <div className="mb-4">
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className="text-xs" style={{ color: "#a78bfa" }}>👤 Individual owners</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <EnrichStage label="Classified" count={indTotal} hint="unique owners" />
+          <span style={{ color: "#484f58" }}>→</span>
+          <EnrichStage label="Free to trace" count={data.ind_owners_skip_pending ?? 0} accent hint="skip_trace_done=false" />
+          <span style={{ color: "#484f58" }}>→</span>
+          <EnrichStage label="Skip-traced" count={data.ind_owners_skip_done ?? 0} />
+          <span style={{ color: "#484f58" }}>→</span>
+          <EnrichStage label="Has phone" count={data.ind_owners_has_phone ?? 0} />
+        </div>
+        {indTotal > 0 && (data.ind_owners_skip_done ?? 0) > 0 && (
+          <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
+            {pct(data.ind_owners_skip_done ?? 0, indTotal)} skip-traced · {pct(data.ind_owners_has_phone ?? 0, indTotal)} have a phone
+          </div>
+        )}
+      </div>
+
+      {/* Entity enrichment */}
+      <div>
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className="text-xs" style={{ color: "#f59e0b" }}>🏢 Entities (need veil-pierce)</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <EnrichStage label="Total entities" count={entTotal} hint="need veil-pierce" />
+          <span style={{ color: "#484f58" }}>→</span>
+          <EnrichStage label="Veil-pierced" count={data.ent_veil_pierced ?? 0} hint="officers found" />
+          <span style={{ color: "#484f58" }}>→</span>
+          <EnrichStage label="Free to trace" count={data.ent_skip_pending ?? 0} accent />
+        </div>
+        {entTotal > 0 && (data.ent_veil_pierced ?? 0) > 0 && (
+          <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
+            {pct(data.ent_veil_pierced ?? 0, entTotal)} veil-pierced
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main funnel panel ────────────────────────────────────────────────────────
 function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: boolean }) {
   const top = data.raw_capitalize;
@@ -240,6 +324,9 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
 
         {/* Owner breakdown */}
         <OwnerBreakdown data={data} />
+
+        {/* Enrichment pipeline */}
+        <EnrichmentPipeline data={data} />
       </div>
 
       <div className="px-5 py-2 border-t text-xs" style={{ borderColor: "#21262d", color: "#484f58" }}>

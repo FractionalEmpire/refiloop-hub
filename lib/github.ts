@@ -1,4 +1,4 @@
-﻿const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_OWNER = process.env.GITHUB_OWNER || "FractionalEmpire";
 const GITHUB_REPO = process.env.GITHUB_REPO || "refiloop2";
 
@@ -89,6 +89,29 @@ export async function updateFileContent(
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+export async function getDirectoryListing(dirPath: string): Promise<DocFile[]> {
+  if (!GITHUB_TOKEN) return [];
+  try {
+    const res = await fetch(`${BASE}/contents/${dirPath}`, {
+      headers: headers(),
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((item: { type: string; name: string; path: string }) => item.type === "file" && item.name.endsWith(".md"))
+      .map((item: { type: string; name: string; path: string }) => ({
+        path: item.path,
+        label: item.name.replace(/\.md$/, "").replace(/_/g, " "),
+        group: "Memory",
+        exists: true,
+      }));
+  } catch {
+    return [];
   }
 }
 

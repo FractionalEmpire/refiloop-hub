@@ -28,11 +28,12 @@ type FunnelData = {
   pending_skip_trace: number;
   // Enrichment pipeline — unique owner/entity counts
   individual_slots: number;
-  entity_slots: number;
   ind_owners_skip_pending: number;
   ind_owners_skip_done: number;
   ind_owners_has_phone: number;
+  ent_qualifying_total: number;
   ent_veil_pierced: number;
+  entity_slots: number;
   ent_skip_pending: number;
 };
 
@@ -242,15 +243,17 @@ function EnrichmentPipeline({ data }: { data: FunnelData }) {
           <span className="text-xs" style={{ color: "#f59e0b" }}>🏢 Entities (need veil-pierce)</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <EnrichStage label="Total entities" count={entTotal} hint="need veil-pierce" />
+          <EnrichStage label="Qualifying entities" count={data.ent_qualifying_total ?? 0} hint="linked to qual. loans" />
           <span style={{ color: "#484f58" }}>→</span>
           <EnrichStage label="Veil-pierced" count={data.ent_veil_pierced ?? 0} hint="officers found" />
           <span style={{ color: "#484f58" }}>→</span>
+          <EnrichStage label="Active slots" count={entTotal} hint="in v_airtable_push" />
+          <span style={{ color: "#484f58" }}>→</span>
           <EnrichStage label="Free to trace" count={data.ent_skip_pending ?? 0} accent />
         </div>
-        {entTotal > 0 && (data.ent_veil_pierced ?? 0) > 0 && (
+        {(data.ent_qualifying_total ?? 0) > 0 && (data.ent_veil_pierced ?? 0) > 0 && (
           <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
-            {pct(data.ent_veil_pierced ?? 0, entTotal)} veil-pierced
+            {pct(data.ent_veil_pierced ?? 0, data.ent_qualifying_total ?? 0)} veil-pierced
           </div>
         )}
       </div>

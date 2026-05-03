@@ -389,7 +389,7 @@ Get started.`;
   let done = false;
   let completionSummary: string | null = null;
   let iterations = 0;
-  const MAX = 20;
+  const MAX = 12; // 20 was too aggressive — vercel maxDuration=300s needs headroom for verify step
 
   try {
     while (!done && iterations < MAX) {

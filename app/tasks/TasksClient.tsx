@@ -659,20 +659,34 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 {selectedTask.status === "in_progress" && (
                   <button
                     onClick={async () => {
-                      if (!confirm("Force reset this task to todo? Use this if Claude appears hung.")) return;
+                      if (!confirm("Reset and re-run this task? Claude will start fresh.")) return;
+                      // Reset first
                       await fetch(`/api/tasks/${selectedTask.id}`, {
                         method: "PATCH",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ reset: true }),
                       });
-                      const updates = { status: "todo" as Task["status"], triggered_at: null, last_activity_at: null };
-                      setTasks((prev) => prev.map((t) => (t.id === selectedTask.id ? { ...t, ...updates } : t)));
-                      setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
+                      // Then immediately re-trigger
+                      const triggerRes = await fetch(`/api/tasks/${selectedTask.id}/trigger`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ model: "claude-sonnet-4-6" }),
+                      });
+                      if (triggerRes.ok) {
+                        const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString(), last_activity_at: new Date().toISOString() };
+                        setTasks((prev) => prev.map((t) => (t.id === selectedTask.id ? { ...t, ...updates } : t)));
+                        setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
+                      } else {
+                        alert("Reset succeeded but re-trigger failed. Use Run Now to restart.");
+                        const updates = { status: "todo" as Task["status"], triggered_at: null, last_activity_at: null };
+                        setTasks((prev) => prev.map((t) => (t.id === selectedTask.id ? { ...t, ...updates } : t)));
+                        setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
+                      }
                     }}
                     className="px-3 py-2 rounded-md text-xs font-semibold"
                     style={{ background: "#21262d", color: "#f85149", border: "1px solid #f8514930" }}
                   >
-                    ↺ Reset
+                    ↺ Restart
                   </button>
                 )}
               </>

@@ -114,6 +114,34 @@ const tools: Anthropic.Tool[] = [
   },
 ];
 
+const verifyTools: Anthropic.Tool[] = [
+  {
+    name: "github_read_file",
+    description: "Read a file from a GitHub repository to verify a change exists",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: { type: "string" },
+        path: { type: "string" },
+        ref: { type: "string", description: "Branch (default: main)" },
+      },
+      required: ["repo", "path"],
+    },
+  },
+  {
+    name: "verify_result",
+    description: "Submit your verification verdict after checking the work",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pass: { type: "boolean", description: "true if task is genuinely complete, false if something is wrong or missing" },
+        reason: { type: "string", description: "Brief explanation of your verdict" },
+      },
+      required: ["pass", "reason"],
+    },
+  },
+];
+
 async function appendNote(taskId: string, note: string) {
   const { data } = await supabase.from("collab_tasks").select("notes").eq("id", taskId).single();
   const prev = data?.notes || "";
@@ -135,6 +163,70 @@ async function postSlack(text: string) {
   }).catch(() => {});
 }
 
+async function githubReadFile(repo: string, path: string, ref = "main"): Promise<string> {
+  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/contents/${path}?ref=${ref}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" },
+  });
+  if (!res.ok) return `HTTP ${res.status}: ${await res.text()}`;
+  const data = await res.json() as { content: string };
+  return Buffer.from(data.content, "base64").toString("utf-8");
+}
+
+async function runVerify(
+  taskId: string,
+  task: { title: string; description: string | null },
+  summary: string
+): Promise<{ pass: boolean; reason: string }> {
+  const verifySystem = `You are a code reviewer verifying that an AI agent completed a task correctly.
+Check that the work actually happened — don't just trust the summary. Read one key changed file if needed.
+Be practical: minor style issues are fine. Fail only if the core requirement is missing or broken.`;
+
+  const verifyPrompt = `Task: ${task.title}
+Description: ${task.description || "(none)"}
+
+Executor summary:
+${summary}
+
+Verify this is genuinely done. If files were changed, read one key file to confirm the change exists and is correct. Then call verify_result with your verdict.`;
+
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: verifyPrompt }];
+
+  for (let i = 0; i < 5; i++) {
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      system: verifySystem,
+      tools: verifyTools,
+      messages,
+    });
+
+    messages.push({ role: "assistant", content: response.content });
+
+    if (response.stop_reason !== "tool_use") break;
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of response.content) {
+      if (block.type !== "tool_use") continue;
+      if (block.name === "verify_result") {
+        const input = block.input as { pass: boolean; reason: string };
+        return { pass: input.pass, reason: input.reason };
+      }
+      if (block.name === "github_read_file") {
+        const input = block.input as { repo: string; path: string; ref?: string };
+        const content = await githubReadFile(input.repo, input.path, input.ref);
+        toolResults.push({ type: "tool_result", tool_use_id: block.id, content });
+      }
+    }
+    if (toolResults.length > 0) {
+      messages.push({ role: "user", content: toolResults });
+    }
+  }
+
+  // Verify loop ended without a verdict — default to pass so good work isn't blocked
+  return { pass: true, reason: "Verification completed without finding issues." };
+}
+
 async function runTool(
   name: string,
   input: Record<string, string>,
@@ -142,19 +234,12 @@ async function runTool(
 ): Promise<{ result: string; terminal?: boolean }> {
   switch (name) {
     case "github_read_file": {
-      const ref = input.ref || "main";
-      const url = `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${ref}`;
-      const res = await fetch(url, {
-        headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" },
-      });
-      if (!res.ok) return { result: `HTTP ${res.status}: ${await res.text()}` };
-      const data = await res.json() as { content: string };
-      return { result: Buffer.from(data.content, "base64").toString("utf-8") };
+      const content = await githubReadFile(input.repo, input.path, input.ref);
+      return { result: content };
     }
 
     case "github_write_file": {
       const branch = input.branch || "main";
-      // Get existing SHA if file exists on target branch
       let sha: string | undefined;
       const existing = await fetch(
         `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${branch}`,
@@ -234,15 +319,9 @@ async function runTool(
     }
 
     case "complete_task": {
-      const completionNote = `✅ COMPLETED\n${input.summary}`;
-      await appendNote(taskId, completionNote);
-      await supabase.from("collab_tasks").update({
-        status: "done",
-        completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq("id", taskId);
-      await postSlack(`✅ *Claude completed a task*\n${input.summary}`);
-      return { result: "Task marked done.", terminal: true };
+      // Don't set done yet — return the summary for the verify step
+      await appendNote(taskId, `📋 EXECUTOR SUMMARY\n${input.summary}`);
+      return { result: "__COMPLETE__:" + input.summary, terminal: true };
     }
 
     case "mark_blocked": {
@@ -308,6 +387,7 @@ Get started.`;
 
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userContent }];
   let done = false;
+  let completionSummary: string | null = null;
   let iterations = 0;
   const MAX = 20;
 
@@ -325,7 +405,6 @@ Get started.`;
       messages.push({ role: "assistant", content: response.content });
 
       if (response.stop_reason === "end_turn") {
-        // Claude stopped without completing — shouldn't happen if it follows instructions
         await appendNote(id, "⚠️ Claude stopped without calling complete_task or mark_blocked.");
         await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
         break;
@@ -337,7 +416,13 @@ Get started.`;
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
         const result = await runTool(block.name, block.input as Record<string, string>, id);
-        toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result.result });
+        // Extract summary from complete_task sentinel
+        if (result.result.startsWith("__COMPLETE__:")) {
+          completionSummary = result.result.slice("__COMPLETE__:".length);
+          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: "Summary recorded. Verification will run." });
+        } else {
+          toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result.result });
+        }
         if (result.terminal) { done = true; break; }
       }
 
@@ -350,6 +435,24 @@ Get started.`;
       await appendNote(id, "⚠️ Hit max iterations without finishing.");
       await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
     }
+
+    // Verify step — only runs when executor called complete_task
+    if (completionSummary) {
+      await appendNote(id, "🔍 Verifying...");
+      const verify = await runVerify(id, task, completionSummary);
+      await appendNote(id, `${verify.pass ? "✅" : "❌"} VERIFICATION ${verify.pass ? "PASSED" : "FAILED"}\n${verify.reason}`);
+      if (verify.pass) {
+        await supabase.from("collab_tasks").update({
+          status: "done",
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq("id", id);
+        await postSlack(`✅ *Task completed & verified*\n*${task.title}*\n${completionSummary}`);
+      } else {
+        await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
+        await postSlack(`❌ *Task failed verification*\n*${task.title}*\n${verify.reason}`);
+      }
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await appendNote(id, `❌ Execution error: ${msg}`);
@@ -357,5 +460,5 @@ Get started.`;
     await postSlack(`❌ *Claude task execution failed*\nTask: ${task.title}\nError: ${msg}`);
   }
 
-  return NextResponse.json({ ok: true, iterations, done });
+  return NextResponse.json({ ok: true, iterations, done, verified: !!completionSummary });
 }

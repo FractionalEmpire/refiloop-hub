@@ -22,6 +22,28 @@ const GROUP_ICONS: Record<string, string> = {
   Memory: "🧠",
 };
 
+const MEMORY_SUBGROUP_ORDER = ["Index", "User", "Feedback", "Project", "Reference", "Other"];
+const MEMORY_SUBGROUP_ICONS: Record<string, string> = {
+  Index: "📋",
+  User: "👤",
+  Feedback: "💬",
+  Project: "🚀",
+  Reference: "🔗",
+  Other: "📁",
+};
+
+function getMemorySubgroup(path: string): string {
+  const name = path.split("/").pop() || "";
+  if (name === "MEMORY.md") return "Index";
+  if (name.startsWith("user_")) return "User";
+  if (name.startsWith("feedback_")) return "Feedback";
+  if (name.startsWith("project_")) return "Project";
+  if (name.startsWith("reference_")) return "Reference";
+  return "Other";
+}
+
+const TOP_GROUP_ORDER = ["Memory", "Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"];
+
 export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -32,7 +54,11 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["Memory", "Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"]));
+  const [activeFilter, setActiveFilter] = useState<string>("All");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    new Set(["Memory", "Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding",
+             "Index", "User", "Feedback", "Project", "Reference"])
+  );
 
   const searchParams = useSearchParams();
   useEffect(() => {
@@ -92,15 +118,6 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
     setTimeout(() => setSaveMsg(""), 4000);
   }
 
-  // Group docs
-  const grouped = docs.reduce((acc, doc) => {
-    if (!acc[doc.group]) acc[doc.group] = [];
-    acc[doc.group].push(doc);
-    return acc;
-  }, {} as Record<string, DocMeta[]>);
-
-  const groupOrder = ["Memory", "Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"];
-
   function toggleGroup(g: string) {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
@@ -109,22 +126,110 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
     });
   }
 
+  // Available top-level groups that actually have docs
+  const presentGroups = TOP_GROUP_ORDER.filter((g) => docs.some((d) => d.group === g));
+
+  // Filter docs by active filter
+  const filteredDocs = activeFilter === "All" ? docs : docs.filter((d) => d.group === activeFilter);
+
+  // Group filtered docs
+  const grouped = filteredDocs.reduce((acc, doc) => {
+    if (!acc[doc.group]) acc[doc.group] = [];
+    acc[doc.group].push(doc);
+    return acc;
+  }, {} as Record<string, DocMeta[]>);
+
   const selectedDoc = docs.find((d) => d.path === selectedPath);
+
+  function renderMemoryGroup(memoryDocs: DocMeta[]) {
+    // Sub-group by prefix
+    const subgrouped: Record<string, DocMeta[]> = {};
+    for (const doc of memoryDocs) {
+      const sg = getMemorySubgroup(doc.path);
+      if (!subgrouped[sg]) subgrouped[sg] = [];
+      subgrouped[sg].push(doc);
+    }
+    // Sort Index docs: MEMORY.md first
+    if (subgrouped["Index"]) {
+      subgrouped["Index"].sort((a, b) => {
+        if (a.path.endsWith("MEMORY.md")) return -1;
+        if (b.path.endsWith("MEMORY.md")) return 1;
+        return a.label.localeCompare(b.label);
+      });
+    }
+
+    return MEMORY_SUBGROUP_ORDER
+      .filter((sg) => subgrouped[sg]?.length)
+      .map((sg) => {
+        const sgDocs = subgrouped[sg];
+        const isExpanded = expandedGroups.has(sg);
+        return (
+          <div key={sg}>
+            <button
+              onClick={() => toggleGroup(sg)}
+              className="w-full flex items-center gap-2 pl-6 pr-4 py-1.5 text-left"
+              style={{ color: "#6e7681" }}
+            >
+              <span className="text-xs">{MEMORY_SUBGROUP_ICONS[sg]}</span>
+              <span className="text-xs font-medium uppercase tracking-wide flex-1" style={{ fontSize: "10px" }}>{sg}</span>
+              <span className="text-xs" style={{ color: "#30363d", fontSize: "10px" }}>{sgDocs.length}</span>
+              <span className="text-xs" style={{ color: "#30363d" }}>{isExpanded ? "▾" : "▸"}</span>
+            </button>
+            {isExpanded && sgDocs.map((doc) => (
+              <button
+                key={doc.path}
+                onClick={() => doc.exists && openDoc(doc.path)}
+                className="w-full text-left pl-12 pr-4 py-1.5 flex items-center gap-2 transition-colors"
+                style={{
+                  background: selectedPath === doc.path ? "#21262d" : "transparent",
+                  color: selectedPath === doc.path ? "#e6edf3" : doc.exists ? "#c9d1d9" : "#484f58",
+                  cursor: doc.exists ? "pointer" : "default",
+                }}
+              >
+                <span className="text-xs shrink-0" style={{ color: doc.exists ? "#3fb950" : "#484f58" }}>●</span>
+                <span className="text-xs truncate">{doc.label}</span>
+              </button>
+            ))}
+          </div>
+        );
+      });
+  }
 
   return (
     <div className="flex h-screen">
       {/* Sidebar */}
-      <div className="w-60 shrink-0 border-r flex flex-col" style={{ background: "#161b22", borderColor: "#30363d" }}>
-        <div className="px-4 py-4 border-b" style={{ borderColor: "#30363d" }}>
+      <div className="w-64 shrink-0 border-r flex flex-col" style={{ background: "#161b22", borderColor: "#30363d" }}>
+        {/* Header */}
+        <div className="px-4 py-3 border-b" style={{ borderColor: "#30363d" }}>
           <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Docs</h2>
           <p className="text-xs mt-0.5" style={{ color: "#8b949e" }}>refiloop2 repo · editable</p>
         </div>
+
+        {/* Filter pills */}
+        <div className="px-3 py-2 border-b flex flex-wrap gap-1" style={{ borderColor: "#30363d" }}>
+          {["All", ...presentGroups].map((g) => (
+            <button
+              key={g}
+              onClick={() => setActiveFilter(g)}
+              className="px-2 py-0.5 rounded text-xs transition-colors"
+              style={{
+                background: activeFilter === g ? "#1f6feb" : "#21262d",
+                color: activeFilter === g ? "#fff" : "#8b949e",
+                fontSize: "10px",
+              }}
+            >
+              {g === "Memory" ? "🧠 Memory" : g}
+            </button>
+          ))}
+        </div>
+
+        {/* Doc list */}
         <div className="flex-1 overflow-y-auto py-2">
-          {groupOrder.map((group) => {
-            const groupDocs = grouped[group] || [];
-            if (!groupDocs.length) return null;
+          {TOP_GROUP_ORDER.filter((g) => grouped[g]?.length).map((group) => {
+            const groupDocs = grouped[group];
             const isExpanded = expandedGroups.has(group);
             const foundCount = groupDocs.filter((d) => d.exists).length;
+
             return (
               <div key={group}>
                 <button
@@ -137,23 +242,28 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
                   <span className="text-xs" style={{ color: "#484f58" }}>{foundCount}/{groupDocs.length}</span>
                   <span className="text-xs" style={{ color: "#484f58" }}>{isExpanded ? "▾" : "▸"}</span>
                 </button>
-                {isExpanded && groupDocs.map((doc) => (
-                  <button
-                    key={doc.path}
-                    onClick={() => doc.exists && openDoc(doc.path)}
-                    className="w-full text-left pl-8 pr-4 py-2 flex items-center gap-2 transition-colors"
-                    style={{
-                      background: selectedPath === doc.path ? "#21262d" : "transparent",
-                      color: selectedPath === doc.path ? "#e6edf3" : doc.exists ? "#c9d1d9" : "#484f58",
-                      cursor: doc.exists ? "pointer" : "default",
-                    }}
-                  >
-                    <span className="text-xs shrink-0" style={{ color: doc.exists ? "#3fb950" : "#484f58" }}>
-                      {doc.exists ? "●" : "○"}
-                    </span>
-                    <span className="text-xs truncate">{doc.label}</span>
-                  </button>
-                ))}
+
+                {isExpanded && (
+                  group === "Memory"
+                    ? renderMemoryGroup(groupDocs)
+                    : groupDocs.map((doc) => (
+                        <button
+                          key={doc.path}
+                          onClick={() => doc.exists && openDoc(doc.path)}
+                          className="w-full text-left pl-8 pr-4 py-2 flex items-center gap-2 transition-colors"
+                          style={{
+                            background: selectedPath === doc.path ? "#21262d" : "transparent",
+                            color: selectedPath === doc.path ? "#e6edf3" : doc.exists ? "#c9d1d9" : "#484f58",
+                            cursor: doc.exists ? "pointer" : "default",
+                          }}
+                        >
+                          <span className="text-xs shrink-0" style={{ color: doc.exists ? "#3fb950" : "#484f58" }}>
+                            {doc.exists ? "●" : "○"}
+                          </span>
+                          <span className="text-xs truncate">{doc.label}</span>
+                        </button>
+                      ))
+                )}
               </div>
             );
           })}

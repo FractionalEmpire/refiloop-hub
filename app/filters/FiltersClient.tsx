@@ -271,7 +271,7 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
     { label: "Imported to loans table", sublabel: "filtered + deduped at import time",          key: "imported_loans", divider: true },
     { label: "Active loans",            sublabel: "is_active = true",                           key: "after_active" },
     { label: "Has state",               sublabel: "state IS NOT NULL",                          key: "after_state_not_null" },
-    { label: "Not blocked state",       sublabel: "excl. CA NY NJ MN AZ NV IL MA CT OR WA",    key: "after_blocked_states" },
+    { label: "Not blocked state",       sublabel: "excl. CA NY NJ MN AZ NV ND SD VT IL",       key: "after_blocked_states" },
     { label: "Loan amount in range",    sublabel: "$500K – $10M",                               key: "after_loan_amount" },
     { label: "Maturity in window",      sublabel: "60 – 365 days out",                          key: "after_maturity" },
     { label: "Property type ok",        sublabel: "excluded types removed — qualified loans",   key: "qualified_loans", divider: true },
@@ -413,7 +413,7 @@ export default function FiltersClient() {
 
   const byKey = Object.fromEntries(rules.map((r) => [r.rule_key, r]));
   const liveBlocked = byKey["blocked_states"]?.rule_value ?? "";
-  const docBlocked = "CA,NY,NJ,MN,AZ,NV,IL,MA,CT,OR,WA";
+  const docBlocked = "CA,NY,NJ,MN,AZ,NV,ND,SD,VT,IL";
   const hasDiscrepancy = liveBlocked && liveBlocked !== docBlocked;
 
   if (loading) {

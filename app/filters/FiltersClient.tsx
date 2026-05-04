@@ -306,20 +306,41 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
   type Row = {
     label: string; sublabel?: string;
     key: keyof FunnelData; ownerKey?: keyof FunnelData;
-    divider?: boolean; color?: string;
+    divider?: boolean; sectionLabel?: string; color?: string;
+    // skipDropped: don't compute a "removed" value for this row
+    // (used for parallel ownership-breakdown rows that aren't a waterfall step)
+    skipDropped?: boolean;
   };
 
   const rows: Row[] = [
-    { label: "Raw Capitalize data",     sublabel: "raw_capitalize_scrape table",                key: "raw_capitalize",       ownerKey: "raw_capitalize_owners" },
-    { label: "Imported to loans table", sublabel: "filtered + deduped at import time",           key: "imported_loans",       ownerKey: "imported_owners",       divider: true },
-    { label: "Active loans",            sublabel: "is_active = true",                            key: "after_active",         ownerKey: "after_active_owners" },
-    { label: "Has state",               sublabel: "state IS NOT NULL",                           key: "after_state_not_null", ownerKey: "after_state_not_null_owners" },
-    { label: "Not blocked state",       sublabel: "excl. CA NY NJ MN AZ NV ND SD VT IL",        key: "after_blocked_states", ownerKey: "after_blocked_states_owners" },
-    { label: "Loan amount in range",    sublabel: "$500K – $10M",                                key: "after_loan_amount",    ownerKey: "after_loan_amount_owners" },
-    { label: "Maturity in window",      sublabel: "60 – 365 days out",                           key: "after_maturity",       ownerKey: "after_maturity_owners" },
-    { label: "Property type ok",        sublabel: "excluded types removed — qualified loans",    key: "qualified_loans",      ownerKey: "qualified_loans_owners", divider: true },
-    { label: "Skip-trace slots (all)",  sublabel: "v_airtable_push — owners + entity officers",  key: "total_slots",          ownerKey: "total_slots_owners",     color: "#b45309" },
-    { label: "Pending skip trace",      sublabel: "skip_trace_done = false",                     key: "pending_skip_trace",   ownerKey: "pending_skip_trace_owners", color: "#b45309" },
+    // ── Filter funnel (loans × owners) ──────────────────────────────────────
+    { label: "Raw Capitalize data",    sublabel: "raw_capitalize_scrape table",             key: "raw_capitalize",       ownerKey: "raw_capitalize_owners" },
+    { label: "Imported to loans",      sublabel: "filtered + deduped at import time",       key: "imported_loans",       ownerKey: "imported_owners",                   divider: true },
+    { label: "Active loans",           sublabel: "is_active = true",                        key: "after_active",         ownerKey: "after_active_owners" },
+    { label: "Has state",              sublabel: "state IS NOT NULL",                       key: "after_state_not_null", ownerKey: "after_state_not_null_owners" },
+    { label: "Not blocked state",      sublabel: "excl. CA NY NJ MN AZ NV ND SD VT IL",   key: "after_blocked_states", ownerKey: "after_blocked_states_owners" },
+    { label: "Loan amount in range",   sublabel: "$500K – $10M",                           key: "after_loan_amount",    ownerKey: "after_loan_amount_owners" },
+    { label: "Maturity in window",     sublabel: "60 – 365 days out",                      key: "after_maturity",       ownerKey: "after_maturity_owners" },
+    { label: "Property type ok",       sublabel: "all filter rules passed",                 key: "qualified_loans",      ownerKey: "qualified_loans_owners",            divider: true },
+
+    // ── Who can be traced? (parallel ownership segments of qualified_loans) ─
+    { label: "Entity-only loans",
+      sublabel: `LLC/corp owner — ${n(data.ent_qualifying_total)} unique entities, only ${n(data.ent_veil_pierced)} officers found so far`,
+      key: "ql_entity_only", ownerKey: "ent_qualifying_total", color: "#e3b341",
+      sectionLabel: "Who can be traced?", skipDropped: true, divider: true },
+    { label: "No owner linked",
+      sublabel: "borrower name was never resolved to a person record",
+      key: "ql_no_owner", color: "#f85149", skipDropped: true },
+    { label: "Individual-owner loans",
+      sublabel: `direct person owner — ${n(data.individual_slots)} unique individuals (avg ${(data.ql_individual_only / data.individual_slots).toFixed(1)} loans/owner)`,
+      key: "ql_individual_only", ownerKey: "individual_slots", color: "#3fb950", skipDropped: true },
+
+    // ── Skip-trace pipeline ─────────────────────────────────────────────────
+    { label: "Skip-trace slots",
+      sublabel: `${n(data.individual_slots)} unique people + ${n(data.ent_veil_pierced)} entity officer slots`,
+      key: "total_slots", ownerKey: "total_slots_owners", color: "#b45309",
+      sectionLabel: "Skip-trace pipeline", divider: true },
+    { label: "Pending skip trace",     sublabel: "skip_trace_done = false",                 key: "pending_skip_trace",  ownerKey: "pending_skip_trace_owners", color: "#b45309" },
   ];
 
   return (
@@ -329,9 +350,7 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
         <div>
           <div className="text-sm font-semibold flex items-center gap-2" style={{ color: "#e6edf3" }}>
             Filter Funnel
-            {refreshing && (
-              <span className="text-xs font-normal" style={{ color: "#8b949e" }}>refreshing…</span>
-            )}
+            {refreshing && <span className="text-xs font-normal" style={{ color: "#8b949e" }}>refreshing…</span>}
           </div>
           <div className="text-xs mt-0.5" style={{ color: "#8b949e" }}>
             {n(data.raw_capitalize)} raw → {n(data.pending_skip_trace)} pending skip trace
@@ -339,23 +358,18 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
         </div>
         {/* Column headers */}
         <div className="flex gap-3 text-right shrink-0">
-          <div className="w-24">
-            <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Loans</div>
-          </div>
-          <div className="w-24">
-            <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Unique owners</div>
-          </div>
-          <div className="w-24">
-            <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Removed</div>
-          </div>
+          <div className="w-24"><div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Loans</div></div>
+          <div className="w-24"><div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Unique owners</div></div>
+          <div className="w-24"><div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Removed</div></div>
         </div>
       </div>
 
       {/* Rows */}
       <div className="px-5 py-3">
         {rows.map((row, i) => {
-          const prevRow = rows[i - 1];
-          const prevCount = prevRow ? data[prevRow.key] as number : null;
+          // For skipDropped rows, don't track them as the "previous" for dropped calculation
+          const prevWaterfallRow = rows.slice(0, i).reverse().find(r => !r.skipDropped);
+          const prevCount = row.skipDropped ? null : (prevWaterfallRow ? data[prevWaterfallRow.key] as number : null);
           const count = data[row.key] as number;
           const ownerCount = row.ownerKey ? data[row.ownerKey] as number : undefined;
           const dropped = prevCount !== null ? prevCount - count : null;
@@ -364,6 +378,11 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
             <div key={row.key}>
               {row.divider && i > 0 && (
                 <div className="my-2 border-t" style={{ borderColor: "#21262d" }} />
+              )}
+              {row.sectionLabel && (
+                <div className="mb-1 mt-0.5 text-[10px] uppercase tracking-wider font-semibold" style={{ color: "#30363d" }}>
+                  {row.sectionLabel}
+                </div>
               )}
               <FunnelRow
                 label={row.label}
@@ -377,13 +396,10 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
             </div>
           );
         })}
-
-        {/* Ownership × Enrichment panel */}
-        <OwnerEnrichmentPanel data={data} />
       </div>
 
       <div className="px-5 py-2 border-t text-xs" style={{ borderColor: "#21262d", color: "#484f58" }}>
-        Funnel refreshes automatically after each filter save. Slot counts reflect{" "}
+        Funnel cached hourly via pg_cron. Slot counts reflect{" "}
         <code style={{ color: "#8b949e" }}>v_airtable_push</code> (refreshed daily at 06:00 UTC).
       </div>
     </div>

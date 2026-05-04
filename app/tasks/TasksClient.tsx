@@ -624,12 +624,23 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 <select
                   className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
                   style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                  value={selectedTask.status}
-                  onChange={(e) => { const v = e.target.value as Task["status"]; updateTask(selectedTask.id, { status: v }); setSelectedTask((p) => p ? { ...p, status: v } : null); }}
+                  value={selectedTask.ready_for_review && selectedTask.status !== "done" ? "review" : selectedTask.status}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "review") {
+                      updateTask(selectedTask.id, { ready_for_review: true });
+                      setSelectedTask((p) => p ? { ...p, ready_for_review: true } : null);
+                    } else {
+                      const s = v as Task["status"];
+                      updateTask(selectedTask.id, { status: s, ready_for_review: false });
+                      setSelectedTask((p) => p ? { ...p, status: s, ready_for_review: false } : null);
+                    }
+                  }}
                 >
                   <option value="todo">To Do</option>
                   <option value="in_progress">In Progress</option>
                   <option value="blocked">Blocked</option>
+                  <option value="review">👀 Review</option>
                   <option value="done">Done</option>
                 </select>
               </div>

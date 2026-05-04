@@ -14,6 +14,14 @@ const STATUS_LABELS: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", done: "Done", blocked: "Blocked",
 };
 const STATUSES = ["todo", "in_progress", "blocked", "done"] as const;
+const DISPLAY_COLUMNS = ["review", "todo", "in_progress", "blocked", "done"] as const;
+const COLUMN_CONFIG: Record<string, { label: string; color: string }> = {
+  review:      { label: "👀 Review",   color: "#7c3aed" },
+  todo:        { label: "To Do",       color: "#8b949e" },
+  in_progress: { label: "In Progress", color: "#58a6ff" },
+  blocked:     { label: "Blocked",     color: "#f85149" },
+  done:        { label: "Done",        color: "#3fb950" },
+};
 const TYPE_CONFIG: Record<string, { label: string; icon: string; color: string; bg: string }> = {
   bug:     { label: "Bug",     icon: "🐛", color: "#f85149", bg: "#f8514920" },
   feature: { label: "Feature", icon: "✨", color: "#58a6ff", bg: "#58a6ff20" },
@@ -60,7 +68,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [reviewFilter, setReviewFilter] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
+  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", url: "" });
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [showRunModal, setShowRunModal] = useState(false);
@@ -119,7 +127,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     });
     const task = await res.json();
     setTasks((prev) => [task, ...prev]);
-    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
+    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", url: "" });
     setShowNew(false);
     setSaving(false);
   }
@@ -169,10 +177,16 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (reviewFilter && !t.ready_for_review) return false;
     return true;
   });
-  const grouped = STATUSES.reduce((acc, s) => {
-    acc[s] = visibleTasks
-      .filter((t) => t.status === s)
-      .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
+  const grouped = DISPLAY_COLUMNS.reduce((acc, col) => {
+    if (col === "review") {
+      acc[col] = visibleTasks
+        .filter((t) => t.ready_for_review && t.status !== "done")
+        .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
+    } else {
+      acc[col] = visibleTasks
+        .filter((t) => t.status === col && !(t.ready_for_review && t.status !== "done"))
+        .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
+    }
     return acc;
   }, {} as Record<string, Task[]>);
 
@@ -293,6 +307,13 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 placeholder="Description (be specific — Claude will read this)"
                 value={newTask.description}
                 onChange={(e) => setNewTask((p) => ({ ...p, description: e.target.value }))}
+              />
+              <input
+                className="w-full px-3 py-2 rounded-md text-sm outline-none font-mono"
+                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#58a6ff" }}
+                placeholder="URL (optional) — https://…"
+                value={newTask.url}
+                onChange={(e) => setNewTask((p) => ({ ...p, url: e.target.value }))}
               />
               <div className="grid grid-cols-4 gap-2">
                 <div>
@@ -427,29 +448,39 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
       {loading ? (
         <div className="text-sm" style={{ color: "#484f58" }}>Loading tasks…</div>
       ) : (
-        <div className="grid grid-cols-4 gap-4">
-          {STATUSES.map((status) => (
+        <div className="grid grid-cols-5 gap-4">
+          {DISPLAY_COLUMNS.map((col) => (
             <div
-              key={status}
-              onDragOver={(e) => { e.preventDefault(); setDragOverStatus(status); }}
+              key={col}
+              onDragOver={(e) => { e.preventDefault(); setDragOverStatus(col); }}
               onDragLeave={() => setDragOverStatus(null)}
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOverStatus(null);
                 const id = dragTaskId.current;
-                if (id) { updateTask(id, { status: status as Task["status"] }); dragTaskId.current = null; }
+                if (id) {
+                  if (col === "review") {
+                    updateTask(id, { ready_for_review: true });
+                  } else {
+                    const draggedTask = tasks.find((t) => t.id === id);
+                    const updates: Partial<Task> = { status: col as Task["status"] };
+                    if (draggedTask?.ready_for_review) updates.ready_for_review = false;
+                    updateTask(id, updates);
+                  }
+                  dragTaskId.current = null;
+                }
               }}
-              style={{ outline: dragOverStatus === status ? `2px solid ${STATUS_COLORS[status]}` : "none", borderRadius: 8 }}
+              style={{ outline: dragOverStatus === col ? `2px solid ${COLUMN_CONFIG[col].color}` : "none", borderRadius: 8 }}
             >
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-2 h-2 rounded-full" style={{ background: STATUS_COLORS[status] }} />
+                <div className="w-2 h-2 rounded-full" style={{ background: COLUMN_CONFIG[col].color }} />
                 <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#8b949e" }}>
-                  {STATUS_LABELS[status]}
+                  {COLUMN_CONFIG[col].label}
                 </span>
-                <span className="text-xs" style={{ color: "#484f58" }}>({grouped[status].length})</span>
+                <span className="text-xs" style={{ color: "#484f58" }}>({grouped[col]?.length ?? 0})</span>
               </div>
               <div className="space-y-2">
-                {grouped[status].map((task) => (
+                {grouped[col]?.map((task) => (
                   <div
                     key={task.id}
                     draggable
@@ -489,6 +520,19 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                           👀 Review
                         </span>
                       )}
+                      {task.url && (
+                        <a
+                          href={task.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs"
+                          title={task.url}
+                          style={{ color: "#58a6ff", lineHeight: 1 }}
+                        >
+                          🔗
+                        </a>
+                      )}
                       <div className="ml-auto">
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
@@ -508,7 +552,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     )}
                   </div>
                 ))}
-                {grouped[status].length === 0 && (
+                {(grouped[col]?.length ?? 0) === 0 && (
                   <div className="rounded-lg border-2 border-dashed p-4 text-center"
                     style={{ borderColor: "#21262d" }}>
                     <p className="text-xs" style={{ color: "#30363d" }}>Empty</p>
@@ -551,6 +595,28 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 onChange={(e) => setSelectedTask((p) => p ? { ...p, description: e.target.value } : null)}
                 onBlur={() => updateTask(selectedTask.id, { description: selectedTask.description })}
               />
+            </div>
+            <div>
+              <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>URL</label>
+              <input
+                className="w-full px-3 py-2 rounded-md text-sm outline-none font-mono"
+                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#58a6ff" }}
+                placeholder="https://…"
+                value={selectedTask.url || ""}
+                onChange={(e) => setSelectedTask((p) => p ? { ...p, url: e.target.value } : null)}
+                onBlur={() => updateTask(selectedTask.id, { url: selectedTask.url || null })}
+              />
+              {selectedTask.url && (
+                <a
+                  href={selectedTask.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs mt-1 inline-flex items-center gap-1"
+                  style={{ color: "#58a6ff" }}
+                >
+                  ↗ Open link
+                </a>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

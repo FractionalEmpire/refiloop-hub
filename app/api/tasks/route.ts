@@ -28,11 +28,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { title, description, assignee, status, priority, project, notes, type } = body;
+  const { title, description, assignee, status, priority, project, notes, type, url } = body;
 
   const { data, error } = await supabase
     .from("collab_tasks")
-    .insert({ title, description, assignee, status: status || "todo", priority: priority || "p1", project, notes, type: type || "task" })
+    .insert({ title, description, assignee, status: status || "todo", priority: priority || "p1", project, notes, type: type || "task", url: url || null })
     .select()
     .single();
 

@@ -24,6 +24,7 @@ export type Task = {
   updated_at: string;
   completed_at: string | null;
   ready_for_review: boolean;
+  url: string | null;
 };
 
 export type EODUpdate = {

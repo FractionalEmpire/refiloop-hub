@@ -152,176 +152,66 @@ function FunnelRow({
   );
 }
 
-// ─── Owner sub-row (indented, no bar — for owner-level exclusion waterfall) ────
-function OwnerSubrow({ label, ownerCount }: { label: string; ownerCount: number }) {
-  return (
-    <div className="flex items-center gap-3 py-1 pl-8">
-      <div className="w-44 shrink-0">
-        <div className="text-xs" style={{ color: "#484f58" }}>↳ {label}</div>
-      </div>
-      <div className="flex-1" />
-      {/* Loans — not applicable */}
-      <div className="w-24 text-right shrink-0">
-        <span className="text-xs" style={{ color: "#21262d" }}>—</span>
-      </div>
-      {/* Unique owners — show the excluded count in red */}
-      <div className="w-24 text-right shrink-0">
-        <div className="text-xs font-mono font-semibold" style={{ color: "#f85149" }}>−{n(ownerCount)}</div>
-      </div>
-      {/* Removed — not applicable */}
-      <div className="w-24 text-right shrink-0">
-        <span className="text-xs" style={{ color: "#21262d" }}>—</span>
-      </div>
-    </div>
-  );
-}
+// ─── Owner pipeline waterfall ─────────────────────────────────────────────────
+function OwnerWaterfall({ data }: { data: FunnelData }) {
+  const entityLinked = data.qualified_loans_owners - data.ind_qual_owners;
+  const computed = data.ind_qual_owners - data.ind_owners_excl_type - data.ind_owners_excl_name;
+  const ok = computed === data.individual_slots;
+  const gap = data.individual_slots - computed;
 
-// ─── Owner × Enrichment panel (replaces OwnerBreakdown + EnrichmentPipeline) ──
-function OwnerEnrichmentPanel({ data }: { data: FunnelData }) {
-  const total = data.qualified_loans;
-  if (!total) return null;
+  function WRow({ minus, value, label, dim }: { minus?: boolean; value: number; label: string; dim?: boolean }) {
+    return (
+      <div className="flex items-baseline gap-3">
+        <div className="w-4 text-right text-xs shrink-0" style={{ color: minus ? "#f85149" : "transparent" }}>
+          {minus ? "−" : "·"}
+        </div>
+        <div className="w-20 text-right shrink-0">
+          <span className="font-mono text-xs font-semibold" style={{ color: minus ? "#f85149" : "#e6edf3" }}>
+            {n(value)}
+          </span>
+        </div>
+        <span className="text-xs" style={{ color: dim ? "#484f58" : "#8b949e" }}>{label}</span>
+      </div>
+    );
+  }
 
-  type Segment = {
-    label: string;
-    key: keyof FunnelData;
-    color: string;
-    desc: string;
-    uniqueCount: number | null;
-    uniqueLabel: string;
-    subRows?: { label: string; value: number; accent?: boolean }[];
-  };
-
-  const segments: Segment[] = [
-    {
-      label: "No owner linked",
-      key: "ql_no_owner",
-      color: "#f85149",
-      desc: "Borrower name was never parsed into an owner record — invisible to the dialer.",
-      uniqueCount: null,
-      uniqueLabel: "",
-    },
-    {
-      label: "Entity only — needs veil pierce",
-      key: "ql_entity_only",
-      color: "#e3b341",
-      desc: "Owned by an LLC/corp. Need to look up officers to get a real person to call.",
-      uniqueCount: data.ent_qualifying_total ?? null,
-      uniqueLabel: "entities",
-      subRows: [
-        { label: "veil-pierced", value: data.ent_veil_pierced ?? 0 },
-        { label: "officer slots", value: data.entity_slots ?? 0 },
-        { label: "free to trace", value: data.ent_skip_pending ?? 0, accent: true },
-      ],
-    },
-    {
-      label: "Individual — ready to skip trace",
-      key: "ql_individual_only",
-      color: "#3fb950",
-      desc: "Directly owned by a named person. In the skip-trace pipeline.",
-      uniqueCount: data.individual_slots ?? null,
-      uniqueLabel: "owners",
-      subRows: [
-        { label: "free to trace", value: data.ind_owners_skip_pending ?? 0, accent: true },
-        { label: "skip-traced", value: data.ind_owners_skip_done ?? 0 },
-        { label: "has phone", value: data.ind_owners_has_phone ?? 0 },
-      ],
-    },
-    {
-      label: "Both individual + entity",
-      key: "ql_both",
-      color: "#58a6ff",
-      desc: "Loan has both an individual owner and an entity owner linked.",
-      uniqueCount: null,
-      uniqueLabel: "",
-    },
-  ];
+  function WSubtotal({ value, label, check }: { value: number; label: string; check?: boolean }) {
+    return (
+      <div className="flex items-baseline gap-3 pt-1" style={{ borderTop: "1px solid #21262d" }}>
+        <div className="w-4 shrink-0" />
+        <div className="w-20 text-right shrink-0">
+          <span className="font-mono text-xs font-bold" style={{ color: "#e6edf3" }}>{n(value)}</span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs" style={{ color: "#8b949e" }}>{label}</span>
+          {check !== undefined && (
+            <span
+              className="text-[10px] px-1.5 py-px rounded font-mono"
+              style={{
+                background: check ? "#0d2818" : "#3d1a1a",
+                color: check ? "#3fb950" : "#f85149",
+              }}
+            >
+              {check ? "✓" : `gap ${gap > 0 ? "+" : ""}${n(gap)}`}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mt-4 pt-4 border-t" style={{ borderColor: "#21262d" }}>
-      {/* Section header */}
-      <div className="text-xs font-semibold mb-1" style={{ color: "#8b949e" }}>
-        Who owns the {n(total)} qualified loans?
+      <div className="text-xs font-semibold mb-3" style={{ color: "#8b949e" }}>
+        Why only {n(data.individual_slots)} of {n(data.qualified_loans_owners)} owners reach skip trace
       </div>
-      <div className="text-xs mb-3" style={{ color: "#484f58" }}>
-        Loan counts show how many loans fall in each category. Unique borrowers show distinct
-        individuals or entities — one owner can hold many loans.
-      </div>
-
-      {/* Stacked color bar */}
-      <div className="flex rounded overflow-hidden mb-4" style={{ height: 10 }}>
-        {segments.map((s) => {
-          const v = data[s.key] as number;
-          const w = (v / total) * 100;
-          return w > 0 ? (
-            <div key={s.key} style={{ width: `${w}%`, background: s.color }} title={`${s.label}: ${n(v)}`} />
-          ) : null;
-        })}
-      </div>
-
-      {/* Column headers */}
-      <div
-        className="flex gap-3 mb-2 pb-1 border-b"
-        style={{ borderColor: "#21262d" }}
-      >
-        <div className="flex-1" />
-        <div className="w-28 text-right text-[10px] uppercase tracking-wider shrink-0" style={{ color: "#484f58" }}>
-          Loans
-        </div>
-        <div className="w-28 text-right text-[10px] uppercase tracking-wider shrink-0" style={{ color: "#484f58" }}>
-          Unique borrowers
-        </div>
-      </div>
-
-      {/* Segment rows */}
-      <div className="space-y-3">
-        {segments.map((s) => {
-          const v = data[s.key] as number;
-          return (
-            <div key={s.key} className="flex gap-3 items-start">
-              {/* Label + desc */}
-              <div className="flex-1 flex gap-2 min-w-0">
-                <div className="mt-1 w-2 h-2 rounded-sm shrink-0" style={{ background: s.color }} />
-                <div className="min-w-0">
-                  <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{s.label}</div>
-                  <div className="text-xs mt-0.5" style={{ color: "#484f58" }}>{s.desc}</div>
-                </div>
-              </div>
-
-              {/* Loans column */}
-              <div className="w-28 text-right shrink-0">
-                <div className="text-xs font-mono font-semibold" style={{ color: s.color }}>{n(v)}</div>
-                <div className="text-[10px]" style={{ color: "#484f58" }}>{pct(v, total)}</div>
-              </div>
-
-              {/* Unique borrowers column */}
-              <div className="w-28 text-right shrink-0">
-                {s.uniqueCount != null ? (
-                  <>
-                    <div className="text-xs font-mono font-semibold" style={{ color: "#8b949e" }}>
-                      {n(s.uniqueCount)}
-                    </div>
-                    <div className="text-[10px]" style={{ color: "#484f58" }}>{s.uniqueLabel}</div>
-                    {s.subRows && s.subRows.length > 0 && (
-                      <div className="mt-1 space-y-0.5">
-                        {s.subRows.map((sr) => (
-                          <div
-                            key={sr.label}
-                            className="text-[10px] font-mono"
-                            style={{ color: sr.accent ? "#3fb950" : "#484f58" }}
-                          >
-                            → {n(sr.value)} {sr.label}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-xs" style={{ color: "#30363d" }}>—</span>
-                )}
-              </div>
-            </div>
-          );
-        })}
+      <div className="space-y-1.5">
+        <WRow value={data.qualified_loans_owners} label="unique owners / entities across qualified loans" />
+        <WRow minus value={entityLinked} label={`entity-linked → ${n(data.ent_qualifying_total)} unique entities (LLC/corp, veil-pierce queue)`} />
+        <WSubtotal value={data.ind_qual_owners} label="individual owner IDs" />
+        <WRow minus value={data.ind_owners_excl_type} label="owner_type ≠ 'individual' — trusts, corps, RAs stored in owner table (correctly classified)" />
+        <WRow minus value={data.ind_owners_excl_name} label="missing first or last name" />
+        <WSubtotal value={data.individual_slots} label="ready for skip trace" check={ok} />
       </div>
     </div>
   );
@@ -335,15 +225,9 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
     label: string; sublabel?: string;
     key: keyof FunnelData; ownerKey?: keyof FunnelData;
     divider?: boolean; sectionLabel?: string; color?: string;
-    // skipDropped: don't compute a "removed" value for this row
-    // (used for parallel ownership-breakdown rows that aren't a waterfall step)
-    skipDropped?: boolean;
-    // isOwnerSubrow: render as an indented owner-exclusion row (no bar, no loan count)
-    isOwnerSubrow?: boolean;
   };
 
   const rows: Row[] = [
-    // ── Filter funnel (loans × owners) ──────────────────────────────────────
     { label: "Raw Capitalize data",    sublabel: "raw_capitalize_scrape table",             key: "raw_capitalize",       ownerKey: "raw_capitalize_owners" },
     { label: "Imported to loans",      sublabel: "filtered + deduped at import time",       key: "imported_loans",       ownerKey: "imported_owners",                   divider: true },
     { label: "Active loans",           sublabel: "is_active = true",                        key: "after_active",         ownerKey: "after_active_owners" },
@@ -352,28 +236,6 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
     { label: "Loan amount in range",   sublabel: "$500K – $10M",                           key: "after_loan_amount",    ownerKey: "after_loan_amount_owners" },
     { label: "Maturity in window",     sublabel: "60 – 365 days out",                      key: "after_maturity",       ownerKey: "after_maturity_owners" },
     { label: "Property type ok",       sublabel: "all filter rules passed",                 key: "qualified_loans",      ownerKey: "qualified_loans_owners",            divider: true },
-
-    // ── Who can be traced? (parallel ownership segments of qualified_loans) ─
-    { label: "Entity-only loans",
-      sublabel: `LLC/corp owner — ${n(data.ent_qualifying_total)} unique entities, only ${n(data.ent_veil_pierced)} officers found so far`,
-      key: "ql_entity_only", ownerKey: "ent_qualifying_total", color: "#e3b341",
-      sectionLabel: "Who can be traced?", skipDropped: true, divider: true },
-    { label: "No owner linked",
-      sublabel: "borrower name was never resolved to a person record",
-      key: "ql_no_owner", color: "#f85149", skipDropped: true },
-    { label: "Individual-owner loans",
-      sublabel: `direct person owner — ${n(data.ind_qual_owners ?? data.individual_slots)} unique owner IDs across ${n(data.ql_individual_only)} loans`,
-      key: "ql_individual_only", ownerKey: "ind_qual_owners", color: "#3fb950", skipDropped: true },
-    { label: "stored as entity type",
-      sublabel: "owner_type ≠ 'individual' — corp services, RAs, etc.",
-      key: "ql_individual_only", ownerKey: "ind_owners_excl_type",
-      isOwnerSubrow: true, skipDropped: true },
-    { label: "missing first or last name",
-      sublabel: "can't skip-trace without a real name",
-      key: "ql_individual_only", ownerKey: "ind_owners_excl_name",
-      isOwnerSubrow: true, skipDropped: true },
-
-    // ── Skip-trace pipeline ─────────────────────────────────────────────────
     { label: "Skip-trace slots",
       sublabel: `${n(data.individual_slots)} unique people + ${n(data.ent_veil_pierced)} entity officer slots`,
       key: "total_slots", ownerKey: "total_slots_owners", color: "#b45309",
@@ -405,15 +267,13 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
       {/* Rows */}
       <div className="px-5 py-3">
         {rows.map((row, i) => {
-          // For skipDropped rows, don't track them as the "previous" for dropped calculation
-          const prevWaterfallRow = rows.slice(0, i).reverse().find(r => !r.skipDropped);
-          const prevCount = row.skipDropped ? null : (prevWaterfallRow ? data[prevWaterfallRow.key] as number : null);
+          const prev = i > 0 && !row.sectionLabel ? data[rows[i - 1].key] as number : null;
           const count = data[row.key] as number;
           const ownerCount = row.ownerKey ? data[row.ownerKey] as number : undefined;
-          const dropped = prevCount !== null ? prevCount - count : null;
+          const dropped = prev !== null ? prev - count : null;
 
           return (
-            <div key={row.key}>
+            <div key={`${row.key}-${i}`}>
               {row.divider && i > 0 && (
                 <div className="my-2 border-t" style={{ borderColor: "#21262d" }} />
               )}
@@ -422,25 +282,20 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
                   {row.sectionLabel}
                 </div>
               )}
-              {row.isOwnerSubrow ? (
-                <OwnerSubrow
-                  label={row.label}
-                  ownerCount={ownerCount ?? 0}
-                />
-              ) : (
-                <FunnelRow
-                  label={row.label}
-                  sublabel={row.sublabel}
-                  count={count}
-                  ownerCount={ownerCount}
-                  dropped={dropped}
-                  maxCount={top}
-                  color={row.color ?? "#1f6feb"}
-                />
-              )}
+              <FunnelRow
+                label={row.label}
+                sublabel={row.sublabel}
+                count={count}
+                ownerCount={ownerCount}
+                dropped={dropped}
+                maxCount={top}
+                color={row.color ?? "#1f6feb"}
+              />
             </div>
           );
         })}
+
+        <OwnerWaterfall data={data} />
       </div>
 
       <div className="px-5 py-2 border-t text-xs" style={{ borderColor: "#21262d", color: "#484f58" }}>

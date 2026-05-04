@@ -12,6 +12,7 @@ type FilterRule = {
 };
 
 type FunnelData = {
+  // Funnel stages — loan counts
   raw_capitalize: number;
   imported_loans: number;
   after_active: number;
@@ -20,17 +21,30 @@ type FunnelData = {
   after_loan_amount: number;
   after_maturity: number;
   qualified_loans: number;
+  total_slots: number;
+  pending_skip_trace: number;
+  // Funnel stages — unique owner/entity counts (parallel to loan counts above)
+  raw_capitalize_owners: number;
+  imported_owners: number;
+  after_active_owners: number;
+  after_state_not_null_owners: number;
+  after_blocked_states_owners: number;
+  after_loan_amount_owners: number;
+  after_maturity_owners: number;
+  qualified_loans_owners: number;
+  total_slots_owners: number;
+  pending_skip_trace_owners: number;
+  // Qualified loan ownership breakdown (loan counts)
   ql_individual_only: number;
   ql_entity_only: number;
   ql_both: number;
   ql_no_owner: number;
-  total_slots: number;
-  pending_skip_trace: number;
-  // Enrichment pipeline — unique owner/entity counts
+  // Individual owner enrichment pipeline (unique owner counts)
   individual_slots: number;
   ind_owners_skip_pending: number;
   ind_owners_skip_done: number;
   ind_owners_has_phone: number;
+  // Entity enrichment pipeline
   ent_qualifying_total: number;
   ent_veil_pierced: number;
   entity_slots: number;
@@ -85,9 +99,11 @@ function pct(v: number, total: number) { return total > 0 ? `${((v / total) * 10
 
 // ─── Funnel bar row ───────────────────────────────────────────────────────────
 function FunnelRow({
-  label, sublabel, count, dropped, maxCount, color = "#1f6feb",
+  label, sublabel, count, ownerCount, dropped, droppedOwners, maxCount, color = "#1f6feb",
 }: {
-  label: string; sublabel?: string; count: number; dropped: number | null;
+  label: string; sublabel?: string;
+  count: number; ownerCount?: number;
+  dropped: number | null; droppedOwners?: number | null;
   maxCount: number; color?: string;
 }) {
   const barPct = maxCount > 0 ? Math.max((count / maxCount) * 100, 0.3) : 0;
@@ -99,27 +115,34 @@ function FunnelRow({
         {sublabel && <div className="text-xs leading-tight mt-0.5" style={{ color: "#484f58" }}>{sublabel}</div>}
       </div>
 
-      {/* Bar + count overlay */}
+      {/* Bar */}
       <div className="flex-1 relative" style={{ height: 22 }}>
         <div className="absolute inset-0 rounded" style={{ background: "#0d1117" }} />
         <div
           className="absolute inset-y-0 left-0 rounded transition-all duration-500"
           style={{ width: `${barPct}%`, background: color, opacity: 0.85 }}
         />
-        {/* Count on top of bar */}
-        <div className="absolute inset-0 flex items-center px-2">
-          <span className="text-xs font-mono font-semibold" style={{ color: "#e6edf3", textShadow: "0 0 4px #0d1117" }}>
-            {n(count)}
-          </span>
-        </div>
       </div>
 
-      {/* Dropped */}
+      {/* Count column: loans on top, owners below */}
+      <div className="w-28 text-right shrink-0">
+        <div className="text-xs font-mono font-semibold" style={{ color: "#e6edf3" }}>{n(count)}</div>
+        {ownerCount != null && (
+          <div className="text-[10px] font-mono leading-tight" style={{ color: "#484f58" }}>
+            {n(ownerCount)} own
+          </div>
+        )}
+      </div>
+
+      {/* Dropped column: loans removed on top, owners removed below */}
       <div className="w-28 text-right shrink-0">
         {dropped !== null && dropped > 0 ? (
-          <span className="text-xs font-mono font-semibold" style={{ color: "#f85149" }}>
-            −{n(dropped)}
-          </span>
+          <>
+            <div className="text-xs font-mono font-semibold" style={{ color: "#f85149" }}>−{n(dropped)}</div>
+            {droppedOwners != null && droppedOwners > 0 && (
+              <div className="text-[10px] font-mono leading-tight" style={{ color: "#6e1f20" }}>−{n(droppedOwners)} own</div>
+            )}
+          </>
         ) : (
           <span className="text-xs" style={{ color: "#30363d" }}>—</span>
         )}
@@ -128,31 +151,81 @@ function FunnelRow({
   );
 }
 
-// ─── Owner breakdown donut-style bar ─────────────────────────────────────────
-function OwnerBreakdown({ data }: { data: FunnelData }) {
+// ─── Owner × Enrichment panel (replaces OwnerBreakdown + EnrichmentPipeline) ──
+function OwnerEnrichmentPanel({ data }: { data: FunnelData }) {
   const total = data.qualified_loans;
   if (!total) return null;
 
-  const segments = [
-    { label: "No owner linked", key: "ql_no_owner" as const, color: "#f85149", desc: "Borrower name was never parsed into an owner record. These loans are invisible to the dialer — biggest gap.", uniqueCount: null as number | null, uniqueLabel: "" },
-    { label: "Entity only (needs veil pierce)", key: "ql_entity_only" as const, color: "#e3b341", desc: "Owned by an LLC/corp. You have the entity but need to look up its officers to get a real person to call.", uniqueCount: data.ent_qualifying_total ?? null, uniqueLabel: "unique entities" },
-    { label: "Individual (ready to skip trace)", key: "ql_individual_only" as const, color: "#3fb950", desc: "Directly owned by a named person. Already in the skip-trace pipeline.", uniqueCount: data.individual_slots ?? null, uniqueLabel: "unique owners" },
-    { label: "Both individual + entity", key: "ql_both" as const, color: "#58a6ff", desc: "Loan has both an individual owner and an entity owner linked.", uniqueCount: null as number | null, uniqueLabel: "" },
+  type Segment = {
+    label: string;
+    key: keyof FunnelData;
+    color: string;
+    desc: string;
+    uniqueCount: number | null;
+    uniqueLabel: string;
+    subRows?: { label: string; value: number; accent?: boolean }[];
+  };
+
+  const segments: Segment[] = [
+    {
+      label: "No owner linked",
+      key: "ql_no_owner",
+      color: "#f85149",
+      desc: "Borrower name was never parsed into an owner record — invisible to the dialer.",
+      uniqueCount: null,
+      uniqueLabel: "",
+    },
+    {
+      label: "Entity only — needs veil pierce",
+      key: "ql_entity_only",
+      color: "#e3b341",
+      desc: "Owned by an LLC/corp. Need to look up officers to get a real person to call.",
+      uniqueCount: data.ent_qualifying_total ?? null,
+      uniqueLabel: "entities",
+      subRows: [
+        { label: "veil-pierced", value: data.ent_veil_pierced ?? 0 },
+        { label: "officer slots", value: data.entity_slots ?? 0 },
+        { label: "free to trace", value: data.ent_skip_pending ?? 0, accent: true },
+      ],
+    },
+    {
+      label: "Individual — ready to skip trace",
+      key: "ql_individual_only",
+      color: "#3fb950",
+      desc: "Directly owned by a named person. In the skip-trace pipeline.",
+      uniqueCount: data.individual_slots ?? null,
+      uniqueLabel: "owners",
+      subRows: [
+        { label: "free to trace", value: data.ind_owners_skip_pending ?? 0, accent: true },
+        { label: "skip-traced", value: data.ind_owners_skip_done ?? 0 },
+        { label: "has phone", value: data.ind_owners_has_phone ?? 0 },
+      ],
+    },
+    {
+      label: "Both individual + entity",
+      key: "ql_both",
+      color: "#58a6ff",
+      desc: "Loan has both an individual owner and an entity owner linked.",
+      uniqueCount: null,
+      uniqueLabel: "",
+    },
   ];
 
   return (
     <div className="mt-4 pt-4 border-t" style={{ borderColor: "#21262d" }}>
+      {/* Section header */}
       <div className="text-xs font-semibold mb-1" style={{ color: "#8b949e" }}>
         Who owns the {n(total)} qualified loans?
       </div>
       <div className="text-xs mb-3" style={{ color: "#484f58" }}>
-        This determines how the pipeline can reach a borrower. Loan counts shown first; unique borrowing parties in gray.
+        Loan counts show how many loans fall in each category. Unique borrowers show distinct
+        individuals or entities — one owner can hold many loans.
       </div>
 
-      {/* Stacked bar */}
-      <div className="flex rounded overflow-hidden mb-3" style={{ height: 10 }}>
+      {/* Stacked color bar */}
+      <div className="flex rounded overflow-hidden mb-4" style={{ height: 10 }}>
         {segments.map((s) => {
-          const v = data[s.key];
+          const v = data[s.key] as number;
           const w = (v / total) * 100;
           return w > 0 ? (
             <div key={s.key} style={{ width: `${w}%`, background: s.color }} title={`${s.label}: ${n(v)}`} />
@@ -160,27 +233,66 @@ function OwnerBreakdown({ data }: { data: FunnelData }) {
         })}
       </div>
 
-      {/* Legend rows */}
-      <div className="space-y-2">
+      {/* Column headers */}
+      <div
+        className="flex gap-3 mb-2 pb-1 border-b"
+        style={{ borderColor: "#21262d" }}
+      >
+        <div className="flex-1" />
+        <div className="w-28 text-right text-[10px] uppercase tracking-wider shrink-0" style={{ color: "#484f58" }}>
+          Loans
+        </div>
+        <div className="w-28 text-right text-[10px] uppercase tracking-wider shrink-0" style={{ color: "#484f58" }}>
+          Unique borrowers
+        </div>
+      </div>
+
+      {/* Segment rows */}
+      <div className="space-y-3">
         {segments.map((s) => {
-          const v = data[s.key];
+          const v = data[s.key] as number;
           return (
-            <div key={s.key} className="flex gap-2">
-              <div className="mt-1 w-2 h-2 rounded-sm shrink-0" style={{ background: s.color }} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-xs font-medium" style={{ color: "#e6edf3" }}>{s.label}</span>
-                  <span className="text-xs font-mono font-semibold" style={{ color: s.color }}>{n(v)}</span>
-                  <span className="text-xs" style={{ color: "#484f58" }}>loans ({pct(v, total)})</span>
-                  {s.uniqueCount != null && (
-                    <>
-                      <span className="text-xs" style={{ color: "#30363d" }}>·</span>
-                      <span className="text-xs font-mono font-semibold" style={{ color: "#8b949e" }}>{n(s.uniqueCount)}</span>
-                      <span className="text-xs" style={{ color: "#484f58" }}>{s.uniqueLabel}</span>
-                    </>
-                  )}
+            <div key={s.key} className="flex gap-3 items-start">
+              {/* Label + desc */}
+              <div className="flex-1 flex gap-2 min-w-0">
+                <div className="mt-1 w-2 h-2 rounded-sm shrink-0" style={{ background: s.color }} />
+                <div className="min-w-0">
+                  <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{s.label}</div>
+                  <div className="text-xs mt-0.5" style={{ color: "#484f58" }}>{s.desc}</div>
                 </div>
-                <div className="text-xs mt-0.5" style={{ color: "#484f58" }}>{s.desc}</div>
+              </div>
+
+              {/* Loans column */}
+              <div className="w-28 text-right shrink-0">
+                <div className="text-xs font-mono font-semibold" style={{ color: s.color }}>{n(v)}</div>
+                <div className="text-[10px]" style={{ color: "#484f58" }}>{pct(v, total)}</div>
+              </div>
+
+              {/* Unique borrowers column */}
+              <div className="w-28 text-right shrink-0">
+                {s.uniqueCount != null ? (
+                  <>
+                    <div className="text-xs font-mono font-semibold" style={{ color: "#8b949e" }}>
+                      {n(s.uniqueCount)}
+                    </div>
+                    <div className="text-[10px]" style={{ color: "#484f58" }}>{s.uniqueLabel}</div>
+                    {s.subRows && s.subRows.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {s.subRows.map((sr) => (
+                          <div
+                            key={sr.label}
+                            className="text-[10px] font-mono"
+                            style={{ color: sr.accent ? "#3fb950" : "#484f58" }}
+                          >
+                            → {n(sr.value)} {sr.label}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-xs" style={{ color: "#30363d" }}>—</span>
+                )}
               </div>
             </div>
           );
@@ -190,106 +302,33 @@ function OwnerBreakdown({ data }: { data: FunnelData }) {
   );
 }
 
-// ─── Enrichment pipeline ─────────────────────────────────────────────────────
-function EnrichStage({ label, count, hint, accent }: { label: string; count: number; hint?: string; accent?: boolean }) {
-  return (
-    <div
-      className="rounded-md px-3 py-2 shrink-0"
-      style={{
-        minWidth: "7rem",
-        background: accent ? "#0d2818" : "#0d1117",
-        border: `1px solid ${accent ? "#1a4731" : "#21262d"}`,
-      }}
-    >
-      <div className="text-[10px] uppercase tracking-wider" style={{ color: "#8b949e" }}>{label}</div>
-      <div className="mt-0.5 text-lg font-semibold tabular-nums" style={{ color: "#e6edf3" }}>{n(count ?? 0)}</div>
-      {hint && <div className="mt-0.5 text-[10px]" style={{ color: "#484f58" }}>{hint}</div>}
-    </div>
-  );
-}
-
-function EnrichmentPipeline({ data }: { data: FunnelData }) {
-  const indTotal = data.individual_slots ?? 0;
-  const entTotal = data.entity_slots ?? 0;
-  if (!indTotal && !entTotal) return null;
-
-  return (
-    <div className="mt-4 pt-4 border-t" style={{ borderColor: "#21262d" }}>
-      <div className="text-xs font-semibold mb-0.5" style={{ color: "#8b949e" }}>
-        Skip-trace enrichment pipeline
-      </div>
-      <div className="text-xs mb-4" style={{ color: "#484f58" }}>
-        Unique <strong style={{ color: "#e6edf3" }}>owners</strong> / <strong style={{ color: "#e6edf3" }}>entities</strong> at each stage — not loan counts.
-        One owner can hold multiple qualified loans.
-      </div>
-
-      {/* Individual enrichment */}
-      <div className="mb-4">
-        <div className="flex items-center gap-1.5 mb-2">
-          <span className="text-xs" style={{ color: "#a78bfa" }}>👤 Individual owners</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <EnrichStage label="Classified" count={indTotal} hint="unique owners" />
-          <span style={{ color: "#484f58" }}>→</span>
-          <EnrichStage label="Free to trace" count={data.ind_owners_skip_pending ?? 0} accent hint="skip_trace_done=false" />
-          <span style={{ color: "#484f58" }}>→</span>
-          <EnrichStage label="Skip-traced" count={data.ind_owners_skip_done ?? 0} />
-          <span style={{ color: "#484f58" }}>→</span>
-          <EnrichStage label="Has phone" count={data.ind_owners_has_phone ?? 0} />
-        </div>
-        {indTotal > 0 && (data.ind_owners_skip_done ?? 0) > 0 && (
-          <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
-            {pct(data.ind_owners_skip_done ?? 0, indTotal)} skip-traced · {pct(data.ind_owners_has_phone ?? 0, indTotal)} have a phone
-          </div>
-        )}
-      </div>
-
-      {/* Entity enrichment */}
-      <div>
-        <div className="flex items-center gap-1.5 mb-2">
-          <span className="text-xs" style={{ color: "#f59e0b" }}>🏢 Entities (need veil-pierce)</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <EnrichStage label="Qualifying entities" count={data.ent_qualifying_total ?? 0} hint="linked to qual. loans" />
-          <span style={{ color: "#484f58" }}>→</span>
-          <EnrichStage label="Veil-pierced" count={data.ent_veil_pierced ?? 0} hint="officers found" />
-          <span style={{ color: "#484f58" }}>→</span>
-          <EnrichStage label="Active slots" count={entTotal} hint="in v_airtable_push" />
-          <span style={{ color: "#484f58" }}>→</span>
-          <EnrichStage label="Free to trace" count={data.ent_skip_pending ?? 0} accent />
-        </div>
-        {(data.ent_qualifying_total ?? 0) > 0 && (data.ent_veil_pierced ?? 0) > 0 && (
-          <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
-            {pct(data.ent_veil_pierced ?? 0, data.ent_qualifying_total ?? 0)} veil-pierced
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Main funnel panel ────────────────────────────────────────────────────────
 function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: boolean }) {
   const top = data.raw_capitalize;
 
-  type Row = { label: string; sublabel?: string; key: keyof FunnelData; divider?: boolean; color?: string };
+  type Row = {
+    label: string; sublabel?: string;
+    key: keyof FunnelData; ownerKey?: keyof FunnelData;
+    divider?: boolean; color?: string;
+  };
+
   const rows: Row[] = [
-    { label: "Raw Capitalize data",     sublabel: "raw_capitalize_scrape table",               key: "raw_capitalize" },
-    { label: "Imported to loans table", sublabel: "filtered + deduped at import time",          key: "imported_loans", divider: true },
-    { label: "Active loans",            sublabel: "is_active = true",                           key: "after_active" },
-    { label: "Has state",               sublabel: "state IS NOT NULL",                          key: "after_state_not_null" },
-    { label: "Not blocked state",       sublabel: "excl. CA NY NJ MN AZ NV ND SD VT IL",       key: "after_blocked_states" },
-    { label: "Loan amount in range",    sublabel: "$500K – $10M",                               key: "after_loan_amount" },
-    { label: "Maturity in window",      sublabel: "60 – 365 days out",                          key: "after_maturity" },
-    { label: "Property type ok",        sublabel: "excluded types removed — qualified loans",   key: "qualified_loans", divider: true },
-    { label: "Skip-trace slots (all)",  sublabel: "v_airtable_push — owners + entity officers", key: "total_slots", color: "#b45309" },
-    { label: "Pending skip trace",      sublabel: "skip_trace_done = false",                    key: "pending_skip_trace", color: "#b45309" },
+    { label: "Raw Capitalize data",     sublabel: "raw_capitalize_scrape table",                key: "raw_capitalize",       ownerKey: "raw_capitalize_owners" },
+    { label: "Imported to loans table", sublabel: "filtered + deduped at import time",           key: "imported_loans",       ownerKey: "imported_owners",       divider: true },
+    { label: "Active loans",            sublabel: "is_active = true",                            key: "after_active",         ownerKey: "after_active_owners" },
+    { label: "Has state",               sublabel: "state IS NOT NULL",                           key: "after_state_not_null", ownerKey: "after_state_not_null_owners" },
+    { label: "Not blocked state",       sublabel: "excl. CA NY NJ MN AZ NV ND SD VT IL",        key: "after_blocked_states", ownerKey: "after_blocked_states_owners" },
+    { label: "Loan amount in range",    sublabel: "$500K – $10M",                                key: "after_loan_amount",    ownerKey: "after_loan_amount_owners" },
+    { label: "Maturity in window",      sublabel: "60 – 365 days out",                           key: "after_maturity",       ownerKey: "after_maturity_owners" },
+    { label: "Property type ok",        sublabel: "excluded types removed — qualified loans",    key: "qualified_loans",      ownerKey: "qualified_loans_owners", divider: true },
+    { label: "Skip-trace slots (all)",  sublabel: "v_airtable_push — owners + entity officers",  key: "total_slots",          ownerKey: "total_slots_owners",     color: "#b45309" },
+    { label: "Pending skip trace",      sublabel: "skip_trace_done = false",                     key: "pending_skip_trace",   ownerKey: "pending_skip_trace_owners", color: "#b45309" },
   ];
 
   return (
     <div className="mb-10 rounded-xl overflow-hidden" style={{ background: "#161b22", border: "1px solid #21262d" }}>
       {/* Header */}
-      <div className="px-5 pt-4 pb-3 border-b flex items-center justify-between" style={{ borderColor: "#21262d" }}>
+      <div className="px-5 pt-4 pb-3 border-b flex items-start justify-between" style={{ borderColor: "#21262d" }}>
         <div>
           <div className="text-sm font-semibold flex items-center gap-2" style={{ color: "#e6edf3" }}>
             Filter Funnel
@@ -301,9 +340,16 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
             {n(data.raw_capitalize)} raw → {n(data.pending_skip_trace)} pending skip trace
           </div>
         </div>
-        <div className="text-xs flex gap-4" style={{ color: "#484f58" }}>
-          <span>count</span>
-          <span className="w-28 text-right">removed</span>
+        {/* Column headers aligned with count + dropped columns */}
+        <div className="flex gap-3 text-right shrink-0">
+          <div className="w-28">
+            <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Loans</div>
+            <div className="text-[9px]" style={{ color: "#30363d" }}>/ owners</div>
+          </div>
+          <div className="w-28">
+            <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Removed</div>
+            <div className="text-[9px]" style={{ color: "#30363d" }}>/ owners</div>
+          </div>
         </div>
       </div>
 
@@ -312,8 +358,11 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
         {rows.map((row, i) => {
           const prevRow = rows[i - 1];
           const prevCount = prevRow ? data[prevRow.key] as number : null;
+          const prevOwners = prevRow?.ownerKey ? data[prevRow.ownerKey] as number : null;
           const count = data[row.key] as number;
+          const ownerCount = row.ownerKey ? data[row.ownerKey] as number : undefined;
           const dropped = prevCount !== null ? prevCount - count : null;
+          const droppedOwners = prevOwners !== null && ownerCount != null ? prevOwners - ownerCount : null;
 
           return (
             <div key={row.key}>
@@ -324,7 +373,9 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
                 label={row.label}
                 sublabel={row.sublabel}
                 count={count}
+                ownerCount={ownerCount}
                 dropped={dropped}
+                droppedOwners={droppedOwners}
                 maxCount={top}
                 color={row.color ?? "#1f6feb"}
               />
@@ -332,11 +383,8 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
           );
         })}
 
-        {/* Owner breakdown */}
-        <OwnerBreakdown data={data} />
-
-        {/* Enrichment pipeline */}
-        <EnrichmentPipeline data={data} />
+        {/* Ownership × Enrichment panel */}
+        <OwnerEnrichmentPanel data={data} />
       </div>
 
       <div className="px-5 py-2 border-t text-xs" style={{ borderColor: "#21262d", color: "#484f58" }}>
@@ -411,7 +459,6 @@ export default function FiltersClient() {
       setEditing((e) => { const n = { ...e }; delete n[rule.id]; return n; });
       setSaved((s) => ({ ...s, [rule.id]: true }));
       setTimeout(() => setSaved((s) => ({ ...s, [rule.id]: false })), 2000);
-      // Refresh the funnel so numbers update immediately
       fetchFunnel(true);
     } else {
       setError((e) => ({ ...e, [rule.id]: "Save failed — try again" }));

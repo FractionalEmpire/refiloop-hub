@@ -26,7 +26,7 @@ export async function PATCH(
     return NextResponse.json(data);
   }
 
-  const allowed = ["title", "description", "assignee", "status", "priority", "project", "notes", "type", "last_activity_at"];
+  const allowed = ["title", "description", "assignee", "status", "priority", "project", "notes", "type", "last_activity_at", "ready_for_review"];
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) updates[key] = body[key];

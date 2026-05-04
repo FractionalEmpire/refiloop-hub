@@ -57,6 +57,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [priorityFilter, setPriorityFilter] = useState<"all" | "p0" | "p1" | "p2" | "later">("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | "bug" | "feature" | "task">("all");
+  const [reviewFilter, setReviewFilter] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
@@ -159,10 +160,13 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     }
   }
 
+  const reviewCount = tasks.filter((t) => t.ready_for_review && t.status !== "done").length;
+
   const visibleTasks = tasks.filter((t) => {
     if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
     if (projectFilter !== "all" && (t.project || "") !== projectFilter) return false;
     if (typeFilter !== "all" && (t.type || "task") !== typeFilter) return false;
+    if (reviewFilter && !t.ready_for_review) return false;
     return true;
   });
   const grouped = STATUSES.reduce((acc, s) => {
@@ -246,6 +250,19 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                                                                                     </button>
                                                                                       ))}
                                                                                       </div>
+          {/* Ready for review filter */}
+          <button
+            onClick={() => setReviewFilter((v) => !v)}
+            className="px-3 py-1.5 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors"
+            style={{
+              background: reviewFilter ? "#7c3aed" : "transparent",
+              color: reviewFilter ? "#fff" : "#8b949e",
+              border: "1px solid",
+              borderColor: reviewFilter ? "#7c3aed" : "#30363d",
+            }}
+          >
+            👀 Review{reviewCount > 0 && <span className="px-1 py-0.5 rounded text-xs font-mono" style={{ background: reviewFilter ? "#ffffff30" : "#7c3aed30", color: reviewFilter ? "#fff" : "#a78bfa" }}>{reviewCount}</span>}
+          </button>
           <button
             onClick={() => setShowNew(true)}
             className="px-3 py-1.5 text-xs font-semibold rounded-md"
@@ -440,9 +457,9 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     onDragEnd={() => { dragTaskId.current = null; setDragOverStatus(null); }}
                     onClick={() => setSelectedTask(task)}
                     className="rounded-lg border p-3 cursor-grab transition-colors"
-                    style={{ background: "#161b22", borderColor: task.assignee === "claude" ? "#d9770640" : "#30363d" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = task.assignee === "claude" ? "#d97706" : "#58a6ff")}
-                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = task.assignee === "claude" ? "#d9770640" : "#30363d")}
+                    style={{ background: "#161b22", borderColor: task.ready_for_review ? "#7c3aed" : task.assignee === "claude" ? "#d9770640" : "#30363d" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = task.ready_for_review ? "#a78bfa" : task.assignee === "claude" ? "#d97706" : "#58a6ff")}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = task.ready_for_review ? "#7c3aed" : task.assignee === "claude" ? "#d9770640" : "#30363d")}
                   >
                     <div className="flex items-center gap-1.5 mb-2">
                       <span className="text-xs px-1 py-0.5 rounded" style={{ background: TYPE_CONFIG[task.type || "task"]?.bg || "#8b949e20", color: TYPE_CONFIG[task.type || "task"]?.color || "#8b949e" }}>{TYPE_CONFIG[task.type || "task"]?.icon || "☑"}</span>
@@ -467,6 +484,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                           </span>
                         );
                       })()}
+                      {task.ready_for_review && (
+                        <span className="text-xs px-1.5 py-0.5 rounded font-semibold" style={{ background: "#7c3aed30", color: "#a78bfa", border: "1px solid #7c3aed50" }}>
+                          👀 Review
+                        </span>
+                      )}
                       <div className="ml-auto">
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
@@ -600,6 +622,25 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   ))}
                 </select>
               </div>
+            </div>
+            {/* Ready for review toggle */}
+            <div>
+              <button
+                onClick={() => {
+                  const v = !selectedTask.ready_for_review;
+                  updateTask(selectedTask.id, { ready_for_review: v });
+                  setSelectedTask((p) => p ? { ...p, ready_for_review: v } : null);
+                }}
+                className="w-full px-3 py-2.5 rounded-md text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+                style={{
+                  background: selectedTask.ready_for_review ? "#7c3aed" : "#21262d",
+                  color: selectedTask.ready_for_review ? "#fff" : "#8b949e",
+                  border: "1px solid",
+                  borderColor: selectedTask.ready_for_review ? "#7c3aed" : "#30363d",
+                }}
+              >
+                👀 {selectedTask.ready_for_review ? "Marked Ready for Review — click to unmark" : "Mark Ready for Review"}
+              </button>
             </div>
             <div>
               <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Notes / Evidence</label>

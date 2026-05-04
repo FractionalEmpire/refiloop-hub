@@ -49,6 +49,10 @@ type FunnelData = {
   ent_veil_pierced: number;
   entity_slots: number;
   ent_skip_pending: number;
+  // Individual owner funnel — explains the 69K→17K gap
+  ind_qual_owners: number;        // unique owner_ids in qualified loans (69,046)
+  ind_owners_excl_type: number;   // excluded: owner_type != 'individual' (51,693)
+  ind_owners_excl_name: number;   // excluded: missing first or last name (59)
 };
 
 const GROUPS: { label: string; keys: string[] }[] = [
@@ -143,6 +147,30 @@ function FunnelRow({
           ? <div className="text-xs font-mono font-semibold" style={{ color: "#f85149" }}>−{n(dropped)}</div>
           : <span className="text-xs" style={{ color: "#30363d" }}>—</span>
         }
+      </div>
+    </div>
+  );
+}
+
+// ─── Owner sub-row (indented, no bar — for owner-level exclusion waterfall) ────
+function OwnerSubrow({ label, ownerCount }: { label: string; ownerCount: number }) {
+  return (
+    <div className="flex items-center gap-3 py-1 pl-8">
+      <div className="w-44 shrink-0">
+        <div className="text-xs" style={{ color: "#484f58" }}>↳ {label}</div>
+      </div>
+      <div className="flex-1" />
+      {/* Loans — not applicable */}
+      <div className="w-24 text-right shrink-0">
+        <span className="text-xs" style={{ color: "#21262d" }}>—</span>
+      </div>
+      {/* Unique owners — show the excluded count in red */}
+      <div className="w-24 text-right shrink-0">
+        <div className="text-xs font-mono font-semibold" style={{ color: "#f85149" }}>−{n(ownerCount)}</div>
+      </div>
+      {/* Removed — not applicable */}
+      <div className="w-24 text-right shrink-0">
+        <span className="text-xs" style={{ color: "#21262d" }}>—</span>
       </div>
     </div>
   );
@@ -310,6 +338,8 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
     // skipDropped: don't compute a "removed" value for this row
     // (used for parallel ownership-breakdown rows that aren't a waterfall step)
     skipDropped?: boolean;
+    // isOwnerSubrow: render as an indented owner-exclusion row (no bar, no loan count)
+    isOwnerSubrow?: boolean;
   };
 
   const rows: Row[] = [
@@ -332,8 +362,16 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
       sublabel: "borrower name was never resolved to a person record",
       key: "ql_no_owner", color: "#f85149", skipDropped: true },
     { label: "Individual-owner loans",
-      sublabel: `direct person owner — ${n(data.individual_slots)} unique individuals (avg ${(data.ql_individual_only / data.individual_slots).toFixed(1)} loans/owner)`,
-      key: "ql_individual_only", ownerKey: "individual_slots", color: "#3fb950", skipDropped: true },
+      sublabel: `direct person owner — ${n(data.ind_qual_owners ?? data.individual_slots)} unique owner IDs across ${n(data.ql_individual_only)} loans`,
+      key: "ql_individual_only", ownerKey: "ind_qual_owners", color: "#3fb950", skipDropped: true },
+    { label: "stored as entity type",
+      sublabel: "owner_type ≠ 'individual' — corp services, RAs, etc.",
+      key: "ql_individual_only", ownerKey: "ind_owners_excl_type",
+      isOwnerSubrow: true, skipDropped: true },
+    { label: "missing first or last name",
+      sublabel: "can't skip-trace without a real name",
+      key: "ql_individual_only", ownerKey: "ind_owners_excl_name",
+      isOwnerSubrow: true, skipDropped: true },
 
     // ── Skip-trace pipeline ─────────────────────────────────────────────────
     { label: "Skip-trace slots",
@@ -384,15 +422,22 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
                   {row.sectionLabel}
                 </div>
               )}
-              <FunnelRow
-                label={row.label}
-                sublabel={row.sublabel}
-                count={count}
-                ownerCount={ownerCount}
-                dropped={dropped}
-                maxCount={top}
-                color={row.color ?? "#1f6feb"}
-              />
+              {row.isOwnerSubrow ? (
+                <OwnerSubrow
+                  label={row.label}
+                  ownerCount={ownerCount ?? 0}
+                />
+              ) : (
+                <FunnelRow
+                  label={row.label}
+                  sublabel={row.sublabel}
+                  count={count}
+                  ownerCount={ownerCount}
+                  dropped={dropped}
+                  maxCount={top}
+                  color={row.color ?? "#1f6feb"}
+                />
+              )}
             </div>
           );
         })}

@@ -14,7 +14,7 @@ const STATUS_LABELS: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", done: "Done", blocked: "Blocked",
 };
 const STATUSES = ["todo", "in_progress", "blocked", "done"] as const;
-const DISPLAY_COLUMNS = ["review", "todo", "in_progress", "blocked", "done"] as const;
+const DISPLAY_COLUMNS = ["todo", "in_progress", "blocked", "review", "done"] as const;
 const COLUMN_CONFIG: Record<string, { label: string; color: string }> = {
   review:      { label: "👀 Review",   color: "#7c3aed" },
   todo:        { label: "To Do",       color: "#8b949e" },

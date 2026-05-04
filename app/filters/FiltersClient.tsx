@@ -99,18 +99,18 @@ function pct(v: number, total: number) { return total > 0 ? `${((v / total) * 10
 
 // ─── Funnel bar row ───────────────────────────────────────────────────────────
 function FunnelRow({
-  label, sublabel, count, ownerCount, dropped, droppedOwners, maxCount, color = "#1f6feb",
+  label, sublabel, count, ownerCount, dropped, maxCount, color = "#1f6feb",
 }: {
   label: string; sublabel?: string;
   count: number; ownerCount?: number;
-  dropped: number | null; droppedOwners?: number | null;
+  dropped: number | null;
   maxCount: number; color?: string;
 }) {
   const barPct = maxCount > 0 ? Math.max((count / maxCount) * 100, 0.3) : 0;
   return (
     <div className="flex items-center gap-3 py-1.5">
       {/* Label */}
-      <div className="w-52 shrink-0">
+      <div className="w-44 shrink-0">
         <div className="text-xs font-medium leading-tight" style={{ color: "#e6edf3" }}>{label}</div>
         {sublabel && <div className="text-xs leading-tight mt-0.5" style={{ color: "#484f58" }}>{sublabel}</div>}
       </div>
@@ -124,28 +124,25 @@ function FunnelRow({
         />
       </div>
 
-      {/* Count column: loans on top, owners below */}
-      <div className="w-28 text-right shrink-0">
+      {/* Loans column */}
+      <div className="w-24 text-right shrink-0">
         <div className="text-xs font-mono font-semibold" style={{ color: "#e6edf3" }}>{n(count)}</div>
-        {ownerCount != null && (
-          <div className="text-[10px] font-mono leading-tight" style={{ color: "#484f58" }}>
-            {n(ownerCount)} own
-          </div>
-        )}
       </div>
 
-      {/* Dropped column: loans removed on top, owners removed below */}
-      <div className="w-28 text-right shrink-0">
-        {dropped !== null && dropped > 0 ? (
-          <>
-            <div className="text-xs font-mono font-semibold" style={{ color: "#f85149" }}>−{n(dropped)}</div>
-            {droppedOwners != null && droppedOwners > 0 && (
-              <div className="text-[10px] font-mono leading-tight" style={{ color: "#6e1f20" }}>−{n(droppedOwners)} own</div>
-            )}
-          </>
-        ) : (
-          <span className="text-xs" style={{ color: "#30363d" }}>—</span>
-        )}
+      {/* Unique owners column */}
+      <div className="w-24 text-right shrink-0">
+        {ownerCount != null
+          ? <div className="text-xs font-mono font-semibold" style={{ color: "#8b949e" }}>{n(ownerCount)}</div>
+          : <span className="text-xs" style={{ color: "#30363d" }}>—</span>
+        }
+      </div>
+
+      {/* Removed loans column */}
+      <div className="w-24 text-right shrink-0">
+        {dropped !== null && dropped > 0
+          ? <div className="text-xs font-mono font-semibold" style={{ color: "#f85149" }}>−{n(dropped)}</div>
+          : <span className="text-xs" style={{ color: "#30363d" }}>—</span>
+        }
       </div>
     </div>
   );
@@ -340,15 +337,16 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
             {n(data.raw_capitalize)} raw → {n(data.pending_skip_trace)} pending skip trace
           </div>
         </div>
-        {/* Column headers aligned with count + dropped columns */}
+        {/* Column headers */}
         <div className="flex gap-3 text-right shrink-0">
-          <div className="w-28">
+          <div className="w-24">
             <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Loans</div>
-            <div className="text-[9px]" style={{ color: "#30363d" }}>/ owners</div>
           </div>
-          <div className="w-28">
+          <div className="w-24">
+            <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Unique owners</div>
+          </div>
+          <div className="w-24">
             <div className="text-[10px] uppercase tracking-wider" style={{ color: "#484f58" }}>Removed</div>
-            <div className="text-[9px]" style={{ color: "#30363d" }}>/ owners</div>
           </div>
         </div>
       </div>
@@ -358,11 +356,9 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
         {rows.map((row, i) => {
           const prevRow = rows[i - 1];
           const prevCount = prevRow ? data[prevRow.key] as number : null;
-          const prevOwners = prevRow?.ownerKey ? data[prevRow.ownerKey] as number : null;
           const count = data[row.key] as number;
           const ownerCount = row.ownerKey ? data[row.ownerKey] as number : undefined;
           const dropped = prevCount !== null ? prevCount - count : null;
-          const droppedOwners = prevOwners !== null && ownerCount != null ? prevOwners - ownerCount : null;
 
           return (
             <div key={row.key}>
@@ -375,7 +371,6 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
                 count={count}
                 ownerCount={ownerCount}
                 dropped={dropped}
-                droppedOwners={droppedOwners}
                 maxCount={top}
                 color={row.color ?? "#1f6feb"}
               />

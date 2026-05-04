@@ -134,10 +134,10 @@ function OwnerBreakdown({ data }: { data: FunnelData }) {
   if (!total) return null;
 
   const segments = [
-    { label: "No owner linked", key: "ql_no_owner" as const, color: "#f85149", desc: "Borrower name was never parsed into an owner record. These loans are invisible to the dialer — biggest gap." },
-    { label: "Entity only (needs veil pierce)", key: "ql_entity_only" as const, color: "#e3b341", desc: "Owned by an LLC/corp. You have the entity but need to look up its officers to get a real person to call." },
-    { label: "Individual (ready to skip trace)", key: "ql_individual_only" as const, color: "#3fb950", desc: "Directly owned by a named person. Already in the skip-trace pipeline." },
-    { label: "Both individual + entity", key: "ql_both" as const, color: "#58a6ff", desc: "Loan has both an individual owner and an entity owner linked." },
+    { label: "No owner linked", key: "ql_no_owner" as const, color: "#f85149", desc: "Borrower name was never parsed into an owner record. These loans are invisible to the dialer — biggest gap.", uniqueCount: null as number | null, uniqueLabel: "" },
+    { label: "Entity only (needs veil pierce)", key: "ql_entity_only" as const, color: "#e3b341", desc: "Owned by an LLC/corp. You have the entity but need to look up its officers to get a real person to call.", uniqueCount: data.ent_qualifying_total ?? null, uniqueLabel: "unique entities" },
+    { label: "Individual (ready to skip trace)", key: "ql_individual_only" as const, color: "#3fb950", desc: "Directly owned by a named person. Already in the skip-trace pipeline.", uniqueCount: data.individual_slots ?? null, uniqueLabel: "unique owners" },
+    { label: "Both individual + entity", key: "ql_both" as const, color: "#58a6ff", desc: "Loan has both an individual owner and an entity owner linked.", uniqueCount: null as number | null, uniqueLabel: "" },
   ];
 
   return (
@@ -146,7 +146,7 @@ function OwnerBreakdown({ data }: { data: FunnelData }) {
         Who owns the {n(total)} qualified loans?
       </div>
       <div className="text-xs mb-3" style={{ color: "#484f58" }}>
-        This determines how the pipeline can reach a borrower.
+        This determines how the pipeline can reach a borrower. Loan counts shown first; unique borrowing parties in gray.
       </div>
 
       {/* Stacked bar */}
@@ -171,7 +171,14 @@ function OwnerBreakdown({ data }: { data: FunnelData }) {
                 <div className="flex items-baseline gap-2 flex-wrap">
                   <span className="text-xs font-medium" style={{ color: "#e6edf3" }}>{s.label}</span>
                   <span className="text-xs font-mono font-semibold" style={{ color: s.color }}>{n(v)}</span>
-                  <span className="text-xs" style={{ color: "#484f58" }}>({pct(v, total)})</span>
+                  <span className="text-xs" style={{ color: "#484f58" }}>loans ({pct(v, total)})</span>
+                  {s.uniqueCount != null && (
+                    <>
+                      <span className="text-xs" style={{ color: "#30363d" }}>·</span>
+                      <span className="text-xs font-mono font-semibold" style={{ color: "#8b949e" }}>{n(s.uniqueCount)}</span>
+                      <span className="text-xs" style={{ color: "#484f58" }}>{s.uniqueLabel}</span>
+                    </>
+                  )}
                 </div>
                 <div className="text-xs mt-0.5" style={{ color: "#484f58" }}>{s.desc}</div>
               </div>

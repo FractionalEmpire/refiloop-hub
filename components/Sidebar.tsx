@@ -10,6 +10,7 @@ const NAV = [
   { href: "/eod", label: "EOD Updates", icon: "📋" },
   { href: "/standup", label: "Daily Standup", icon: "⏰" },
   { href: "/docs", label: "Docs", icon: "📄" },
+  { href: "/analytics", label: "Analytics", icon: "📊" },
   { href: "/filters", label: "Filters", icon: "⚙️" },
   { href: "/entity-patterns", label: "Entity Patterns", icon: "🏷️" },
   { href: "/context", label: "Business Context", icon: "🏢" },

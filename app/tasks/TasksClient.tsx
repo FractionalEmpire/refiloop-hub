@@ -14,14 +14,6 @@ const STATUS_LABELS: Record<string, string> = {
   todo: "To Do", in_progress: "In Progress", done: "Done", blocked: "Blocked",
 };
 const STATUSES = ["todo", "in_progress", "blocked", "done"] as const;
-const DISPLAY_COLUMNS = ["todo", "in_progress", "blocked", "review", "done"] as const;
-const COLUMN_CONFIG: Record<string, { label: string; color: string }> = {
-  review:      { label: "👀 Review",   color: "#7c3aed" },
-  todo:        { label: "To Do",       color: "#8b949e" },
-  in_progress: { label: "In Progress", color: "#58a6ff" },
-  blocked:     { label: "Blocked",     color: "#f85149" },
-  done:        { label: "Done",        color: "#3fb950" },
-};
 const TYPE_CONFIG: Record<string, { label: string; icon: string; color: string; bg: string }> = {
   bug:     { label: "Bug",     icon: "🐛", color: "#f85149", bg: "#f8514920" },
   feature: { label: "Feature", icon: "✨", color: "#58a6ff", bg: "#58a6ff20" },
@@ -38,26 +30,6 @@ const ASSIGNEE_LABEL: Record<string, string> = {
   david: "D", gorjan: "G", both: "B", claude: "C",
 };
 
-
-function formatElapsed(triggeredAt: string, now: number): { label: string; color: string } {
-  const secs = Math.floor((now - new Date(triggeredAt).getTime()) / 1000);
-  const color = secs < 300 ? "#d97706" : secs < 900 ? "#f0883e" : "#f85149";
-  if (secs < 60) return { label: `${secs}s`, color };
-  const m = Math.floor(secs / 60), s = secs % 60;
-  if (m < 60) return { label: s > 0 ? `${m}m ${s}s` : `${m}m`, color };
-  const h = Math.floor(m / 60), rm = m % 60;
-  return { label: `${h}h ${rm}m`, color };
-}
-
-function formatAgo(ts: string, now: number): string {
-  const secs = Math.floor((now - new Date(ts).getTime()) / 1000);
-  if (secs < 60) return `${secs}s ago`;
-  const m = Math.floor(secs / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m ago`;
-}
-
 export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,10 +37,10 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [priorityFilter, setPriorityFilter] = useState<"all" | "p0" | "p1" | "p2" | "later">("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | "bug" | "feature" | "task">("all");
-  const [reviewFilter, setReviewFilter] = useState(false);
+  const [allProjectNames, setAllProjectNames] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", url: "" });
+  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [showRunModal, setShowRunModal] = useState(false);
@@ -76,12 +48,6 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [runModel, setRunModel] = useState("claude-sonnet-4-6");
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
   const dragTaskId = useRef<string | null>(null);
-
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   const MODELS = [
     { id: "claude-opus-4-7", label: "Opus 4.7 — most capable" },
@@ -98,6 +64,22 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Read ?project= URL param on mount to pre-populate filter
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get("project");
+    if (p) setProjectFilter(p);
+  }, []);
+
+  // Load ALL project names (ignores assignee filter — needed for dropdown)
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((data: { name: string }[]) => {
+        if (Array.isArray(data)) setAllProjectNames(data.map((p) => p.name).sort());
+      });
+  }, []);
 
   const availableProjects = useMemo(() => {
     const seen = new Set<string>();
@@ -127,7 +109,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     });
     const task = await res.json();
     setTasks((prev) => [task, ...prev]);
-    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", url: "" });
+    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
     setShowNew(false);
     setSaving(false);
   }
@@ -168,25 +150,16 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     }
   }
 
-  const reviewCount = tasks.filter((t) => t.ready_for_review && t.status !== "done").length;
-
   const visibleTasks = tasks.filter((t) => {
     if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
     if (projectFilter !== "all" && (t.project || "") !== projectFilter) return false;
     if (typeFilter !== "all" && (t.type || "task") !== typeFilter) return false;
-    if (reviewFilter && !t.ready_for_review) return false;
     return true;
   });
-  const grouped = DISPLAY_COLUMNS.reduce((acc, col) => {
-    if (col === "review") {
-      acc[col] = visibleTasks
-        .filter((t) => t.ready_for_review && t.status !== "done")
-        .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
-    } else {
-      acc[col] = visibleTasks
-        .filter((t) => t.status === col && !(t.ready_for_review && t.status !== "done"))
-        .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
-    }
+  const grouped = STATUSES.reduce((acc, s) => {
+    acc[s] = visibleTasks
+      .filter((t) => t.status === s)
+      .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
     return acc;
   }, {} as Record<string, Task[]>);
 
@@ -209,7 +182,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
             style={{ background: projectFilter !== "all" ? "#21262d" : "transparent", border: "1px solid #30363d", color: projectFilter !== "all" ? "#e6edf3" : "#8b949e" }}
           >
             <option value="all">All Projects</option>
-            {availableProjects.map((p) => (
+            {allProjectNames.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
@@ -264,19 +237,6 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                                                                                     </button>
                                                                                       ))}
                                                                                       </div>
-          {/* Ready for review filter */}
-          <button
-            onClick={() => setReviewFilter((v) => !v)}
-            className="px-3 py-1.5 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-colors"
-            style={{
-              background: reviewFilter ? "#7c3aed" : "transparent",
-              color: reviewFilter ? "#fff" : "#8b949e",
-              border: "1px solid",
-              borderColor: reviewFilter ? "#7c3aed" : "#30363d",
-            }}
-          >
-            👀 Review{reviewCount > 0 && <span className="px-1 py-0.5 rounded text-xs font-mono" style={{ background: reviewFilter ? "#ffffff30" : "#7c3aed30", color: reviewFilter ? "#fff" : "#a78bfa" }}>{reviewCount}</span>}
-          </button>
           <button
             onClick={() => setShowNew(true)}
             className="px-3 py-1.5 text-xs font-semibold rounded-md"
@@ -307,13 +267,6 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 placeholder="Description (be specific — Claude will read this)"
                 value={newTask.description}
                 onChange={(e) => setNewTask((p) => ({ ...p, description: e.target.value }))}
-              />
-              <input
-                className="w-full px-3 py-2 rounded-md text-sm outline-none font-mono"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#58a6ff" }}
-                placeholder="URL (optional) — https://…"
-                value={newTask.url}
-                onChange={(e) => setNewTask((p) => ({ ...p, url: e.target.value }))}
               />
               <div className="grid grid-cols-4 gap-2">
                 <div>
@@ -353,7 +306,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     onChange={(e) => setNewTask((p) => ({ ...p, project: e.target.value }))}
                   >
                     <option value="">— select —</option>
-                    {availableProjects.map((p) => (
+                    {allProjectNames.map((p) => (
                       <option key={p} value={p}>{p}</option>
                     ))}
                   </select>
@@ -448,39 +401,29 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
       {loading ? (
         <div className="text-sm" style={{ color: "#484f58" }}>Loading tasks…</div>
       ) : (
-        <div className="grid grid-cols-5 gap-4">
-          {DISPLAY_COLUMNS.map((col) => (
+        <div className="grid grid-cols-4 gap-4">
+          {STATUSES.map((status) => (
             <div
-              key={col}
-              onDragOver={(e) => { e.preventDefault(); setDragOverStatus(col); }}
+              key={status}
+              onDragOver={(e) => { e.preventDefault(); setDragOverStatus(status); }}
               onDragLeave={() => setDragOverStatus(null)}
               onDrop={(e) => {
                 e.preventDefault();
                 setDragOverStatus(null);
                 const id = dragTaskId.current;
-                if (id) {
-                  if (col === "review") {
-                    updateTask(id, { ready_for_review: true });
-                  } else {
-                    const draggedTask = tasks.find((t) => t.id === id);
-                    const updates: Partial<Task> = { status: col as Task["status"] };
-                    if (draggedTask?.ready_for_review) updates.ready_for_review = false;
-                    updateTask(id, updates);
-                  }
-                  dragTaskId.current = null;
-                }
+                if (id) { updateTask(id, { status: status as Task["status"] }); dragTaskId.current = null; }
               }}
-              style={{ outline: dragOverStatus === col ? `2px solid ${COLUMN_CONFIG[col].color}` : "none", borderRadius: 8 }}
+              style={{ outline: dragOverStatus === status ? `2px solid ${STATUS_COLORS[status]}` : "none", borderRadius: 8 }}
             >
               <div className="flex items-center gap-2 mb-3">
-                <div className="w-2 h-2 rounded-full" style={{ background: COLUMN_CONFIG[col].color }} />
+                <div className="w-2 h-2 rounded-full" style={{ background: STATUS_COLORS[status] }} />
                 <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "#8b949e" }}>
-                  {COLUMN_CONFIG[col].label}
+                  {STATUS_LABELS[status]}
                 </span>
-                <span className="text-xs" style={{ color: "#484f58" }}>({grouped[col]?.length ?? 0})</span>
+                <span className="text-xs" style={{ color: "#484f58" }}>({grouped[status].length})</span>
               </div>
               <div className="space-y-2">
-                {grouped[col]?.map((task) => (
+                {grouped[status].map((task) => (
                   <div
                     key={task.id}
                     draggable
@@ -488,9 +431,9 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     onDragEnd={() => { dragTaskId.current = null; setDragOverStatus(null); }}
                     onClick={() => setSelectedTask(task)}
                     className="rounded-lg border p-3 cursor-grab transition-colors"
-                    style={{ background: "#161b22", borderColor: task.ready_for_review ? "#7c3aed" : task.assignee === "claude" ? "#d9770640" : "#30363d" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = task.ready_for_review ? "#a78bfa" : task.assignee === "claude" ? "#d97706" : "#58a6ff")}
-                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = task.ready_for_review ? "#7c3aed" : task.assignee === "claude" ? "#d9770640" : "#30363d")}
+                    style={{ background: "#161b22", borderColor: task.assignee === "claude" ? "#d9770640" : "#30363d" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = task.assignee === "claude" ? "#d97706" : "#58a6ff")}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = task.assignee === "claude" ? "#d9770640" : "#30363d")}
                   >
                     <div className="flex items-center gap-1.5 mb-2">
                       <span className="text-xs px-1 py-0.5 rounded" style={{ background: TYPE_CONFIG[task.type || "task"]?.bg || "#8b949e20", color: TYPE_CONFIG[task.type || "task"]?.color || "#8b949e" }}>{TYPE_CONFIG[task.type || "task"]?.icon || "☑"}</span>
@@ -505,33 +448,10 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                           {task.project}
                         </span>
                       )}
-                      {task.assignee === "claude" && task.status === "in_progress" && (() => {
-                        const elapsed = task.triggered_at ? formatElapsed(task.triggered_at, now) : null;
-                        return (
-                          <span className="text-xs px-1.5 py-0.5 rounded font-mono flex items-center gap-1"
-                            style={{ background: elapsed ? `${elapsed.color}18` : "#d9770618", color: elapsed?.color || "#d97706", border: `1px solid ${elapsed?.color || "#d97706"}30` }}>
-                            <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: elapsed?.color || "#d97706" }} />
-                            {elapsed ? elapsed.label : "working…"}
-                          </span>
-                        );
-                      })()}
-                      {task.ready_for_review && (
-                        <span className="text-xs px-1.5 py-0.5 rounded font-semibold" style={{ background: "#7c3aed30", color: "#a78bfa", border: "1px solid #7c3aed50" }}>
-                          👀 Review
+                      {task.assignee === "claude" && task.status === "in_progress" && (
+                        <span className="text-xs px-1 py-0.5 rounded animate-pulse" style={{ background: "#d9770620", color: "#d97706" }}>
+                          working…
                         </span>
-                      )}
-                      {task.url && (
-                        <a
-                          href={task.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-xs"
-                          title={task.url}
-                          style={{ color: "#58a6ff", lineHeight: 1 }}
-                        >
-                          🔗
-                        </a>
                       )}
                       <div className="ml-auto">
                         <div
@@ -552,7 +472,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     )}
                   </div>
                 ))}
-                {(grouped[col]?.length ?? 0) === 0 && (
+                {grouped[status].length === 0 && (
                   <div className="rounded-lg border-2 border-dashed p-4 text-center"
                     style={{ borderColor: "#21262d" }}>
                     <p className="text-xs" style={{ color: "#30363d" }}>Empty</p>
@@ -596,51 +516,18 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 onBlur={() => updateTask(selectedTask.id, { description: selectedTask.description })}
               />
             </div>
-            <div>
-              <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>URL</label>
-              <input
-                className="w-full px-3 py-2 rounded-md text-sm outline-none font-mono"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#58a6ff" }}
-                placeholder="https://…"
-                value={selectedTask.url || ""}
-                onChange={(e) => setSelectedTask((p) => p ? { ...p, url: e.target.value } : null)}
-                onBlur={() => updateTask(selectedTask.id, { url: selectedTask.url || null })}
-              />
-              {selectedTask.url && (
-                <a
-                  href={selectedTask.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs mt-1 inline-flex items-center gap-1"
-                  style={{ color: "#58a6ff" }}
-                >
-                  ↗ Open link
-                </a>
-              )}
-            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Status</label>
                 <select
                   className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
                   style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                  value={selectedTask.ready_for_review && selectedTask.status !== "done" ? "review" : selectedTask.status}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === "review") {
-                      updateTask(selectedTask.id, { ready_for_review: true });
-                      setSelectedTask((p) => p ? { ...p, ready_for_review: true } : null);
-                    } else {
-                      const s = v as Task["status"];
-                      updateTask(selectedTask.id, { status: s, ready_for_review: false });
-                      setSelectedTask((p) => p ? { ...p, status: s, ready_for_review: false } : null);
-                    }
-                  }}
+                  value={selectedTask.status}
+                  onChange={(e) => { const v = e.target.value as Task["status"]; updateTask(selectedTask.id, { status: v }); setSelectedTask((p) => p ? { ...p, status: v } : null); }}
                 >
                   <option value="todo">To Do</option>
                   <option value="in_progress">In Progress</option>
                   <option value="blocked">Blocked</option>
-                  <option value="review">👀 Review</option>
                   <option value="done">Done</option>
                 </select>
               </div>
@@ -694,30 +581,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   onChange={(e) => { updateTask(selectedTask.id, { project: e.target.value }); setSelectedTask((p) => p ? { ...p, project: e.target.value } : null); }}
                 >
                   <option value="">— select —</option>
-                  {availableProjects.map((p) => (
+                  {allProjectNames.map((p) => (
                     <option key={p} value={p}>{p}</option>
                   ))}
                 </select>
               </div>
-            </div>
-            {/* Ready for review toggle */}
-            <div>
-              <button
-                onClick={() => {
-                  const v = !selectedTask.ready_for_review;
-                  updateTask(selectedTask.id, { ready_for_review: v });
-                  setSelectedTask((p) => p ? { ...p, ready_for_review: v } : null);
-                }}
-                className="w-full px-3 py-2.5 rounded-md text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
-                style={{
-                  background: selectedTask.ready_for_review ? "#7c3aed" : "#21262d",
-                  color: selectedTask.ready_for_review ? "#fff" : "#8b949e",
-                  border: "1px solid",
-                  borderColor: selectedTask.ready_for_review ? "#7c3aed" : "#30363d",
-                }}
-              >
-                👀 {selectedTask.ready_for_review ? "Marked Ready for Review — click to unmark" : "Mark Ready for Review"}
-              </button>
             </div>
             <div>
               <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Notes / Evidence</label>
@@ -736,21 +604,6 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 Triggered: {new Date(selectedTask.triggered_at).toLocaleString()}
               </p>
             )}
-            {selectedTask.last_activity_at && selectedTask.status === "in_progress" && (
-              <p className="text-xs" style={{ color: "#484f58" }}>
-                Last action: <span style={{ color: "#8b949e" }}>{formatAgo(selectedTask.last_activity_at, now)}</span>
-              </p>
-            )}
-            {selectedTask.triggered_at && selectedTask.assignee === "claude" && selectedTask.status === "in_progress" && (() => {
-              const elapsed = formatElapsed(selectedTask.triggered_at, now);
-              return (
-                <div className="flex items-center gap-2 px-2 py-1.5 rounded-md" style={{ background: `${elapsed.color}12`, border: `1px solid ${elapsed.color}30` }}>
-                  <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: elapsed.color }} />
-                  <span className="text-xs font-mono font-semibold" style={{ color: elapsed.color }}>{elapsed.label} elapsed</span>
-                  <span className="text-xs ml-auto" style={{ color: "#484f58" }}>{elapsed.color === "#f85149" ? "⚠ may be hung" : "working"}</span>
-                </div>
-              );
-            })()}
           </div>
           <div className="px-5 py-4 border-t flex gap-2" style={{ borderColor: "#30363d" }}>
             {selectedTask.assignee === "claude" ? (
@@ -774,39 +627,6 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 >
                   ✓ Done
                 </button>
-                {selectedTask.status === "in_progress" && (
-                  <button
-                    onClick={async () => {
-                      if (!confirm("Reset and re-run this task? Claude will start fresh.")) return;
-                      // Reset first
-                      await fetch(`/api/tasks/${selectedTask.id}`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ reset: true }),
-                      });
-                      // Then immediately re-trigger
-                      const triggerRes = await fetch(`/api/tasks/${selectedTask.id}/trigger`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ model: "claude-sonnet-4-6" }),
-                      });
-                      if (triggerRes.ok) {
-                        const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString(), last_activity_at: new Date().toISOString() };
-                        setTasks((prev) => prev.map((t) => (t.id === selectedTask.id ? { ...t, ...updates } : t)));
-                        setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
-                      } else {
-                        alert("Reset succeeded but re-trigger failed. Use Run Now to restart.");
-                        const updates = { status: "todo" as Task["status"], triggered_at: null, last_activity_at: null };
-                        setTasks((prev) => prev.map((t) => (t.id === selectedTask.id ? { ...t, ...updates } : t)));
-                        setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
-                      }
-                    }}
-                    className="px-3 py-2 rounded-md text-xs font-semibold"
-                    style={{ background: "#21262d", color: "#f85149", border: "1px solid #f8514930" }}
-                  >
-                    ↺ Restart
-                  </button>
-                )}
               </>
             ) : (
               <button

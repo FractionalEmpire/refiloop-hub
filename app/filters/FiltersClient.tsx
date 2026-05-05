@@ -307,6 +307,134 @@ function FilterFunnel({ data, refreshing }: { data: FunnelData; refreshing: bool
 }
 
 // ─── Main page ────────────────────────────────────────────────────────────────
+// ── Pipeline by State ──────────────────────────────────────────────────────
+type StateRow = { state: string; loan_count: number; avg_loan: number; total_loan: number };
+
+const STATE_NAMES: Record<string, string> = {
+  AL:"Alabama",AK:"Alaska",AR:"Arkansas",CO:"Colorado",DE:"Delaware",FL:"Florida",
+  GA:"Georgia",HI:"Hawaii",IN:"Indiana",IA:"Iowa",KS:"Kansas",KY:"Kentucky",
+  LA:"Louisiana",ME:"Maine",MD:"Maryland",MI:"Michigan",MS:"Mississippi",MO:"Missouri",
+  MT:"Montana",NE:"Nebraska",NH:"New Hampshire",NM:"New Mexico",NC:"North Carolina",
+  OH:"Ohio",OK:"Oklahoma",PA:"Pennsylvania",RI:"Rhode Island",SC:"South Carolina",
+  TN:"Tennessee",TX:"Texas",UT:"Utah",VA:"Virginia",WV:"West Virginia",WI:"Wisconsin",WY:"Wyoming",
+};
+
+// Priority states per GTM strategy
+const PRIORITY = new Set(["FL","TX","GA","NC","OH"]);
+
+function fmtMoney(n: number) {
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  return `$${(n / 1_000).toFixed(0)}K`;
+}
+
+function PipelineByStateSection() {
+  const [rows, setRows] = useState<StateRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  function load() {
+    if (rows.length > 0) return;
+    setLoading(true);
+    fetch("/api/pipeline-by-state")
+      .then((r) => r.json())
+      .then((d) => { setRows(Array.isArray(d) ? d : []); setLoading(false); });
+  }
+
+  function toggle() {
+    if (!open) load();
+    setOpen((v) => !v);
+  }
+
+  const total = rows.reduce((s, r) => s + r.loan_count, 0);
+
+  return (
+    <div className="mb-8">
+      {/* Collapsible header */}
+      <button
+        onClick={toggle}
+        className="w-full flex items-center justify-between pb-2 border-b"
+        style={{ borderColor: "#21262d" }}
+      >
+        <span
+          className="text-xs font-semibold uppercase tracking-wider"
+          style={{ color: "#8b949e" }}
+        >
+          Pipeline by State
+          {total > 0 && (
+            <span className="ml-2 font-mono normal-case" style={{ color: "#3fb950" }}>
+              {total.toLocaleString()} total qualified
+            </span>
+          )}
+        </span>
+        <span style={{ color: "#484f58", fontSize: "0.75rem" }}>{open ? "▲ collapse" : "▼ expand"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-4">
+          {loading ? (
+            <div className="text-xs py-6 text-center" style={{ color: "#484f58" }}>Loading…</div>
+          ) : rows.length === 0 ? (
+            <div className="text-xs py-6 text-center" style={{ color: "#484f58" }}>No data</div>
+          ) : (
+            <>
+              {/* Bar chart */}
+              <div className="space-y-1.5">
+                {rows.map((row, i) => {
+                  const pct = Math.round((row.loan_count / rows[0].loan_count) * 100);
+                  const isPriority = PRIORITY.has(row.state);
+                  return (
+                    <div key={row.state} className="flex items-center gap-3">
+                      {/* Rank */}
+                      <span className="text-xs font-mono w-5 text-right shrink-0" style={{ color: "#484f58" }}>
+                        {i + 1}
+                      </span>
+                      {/* State badge */}
+                      <span
+                        className="text-xs font-mono font-bold w-8 shrink-0 text-center py-0.5 rounded"
+                        style={{
+                          color: isPriority ? "#3fb950" : "#8b949e",
+                          background: isPriority ? "#0d2818" : "transparent",
+                          border: isPriority ? "1px solid #238636" : "1px solid transparent",
+                        }}
+                        title={STATE_NAMES[row.state] ?? row.state}
+                      >
+                        {row.state}
+                      </span>
+                      {/* Bar */}
+                      <div className="flex-1 rounded-full overflow-hidden" style={{ background: "#21262d", height: 6 }}>
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${pct}%`,
+                            background: isPriority ? "#2ea043" : "#1f6feb",
+                            transition: "width 0.3s ease",
+                          }}
+                        />
+                      </div>
+                      {/* Count */}
+                      <span className="text-xs font-mono w-14 text-right shrink-0" style={{ color: "#e6edf3" }}>
+                        {row.loan_count.toLocaleString()}
+                      </span>
+                      {/* Avg loan */}
+                      <span className="text-xs w-16 text-right shrink-0" style={{ color: "#484f58" }}>
+                        {fmtMoney(row.avg_loan)} avg
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs mt-4" style={{ color: "#484f58" }}>
+                <span style={{ color: "#3fb950" }}>Green</span> = priority states (FL, TX, GA, NC, OH).
+                Counts reflect all active filter rules.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 export default function FiltersClient() {
   const [rules, setRules] = useState<FilterRule[]>([]);
   const [editing, setEditing] = useState<Record<number, string>>({});
@@ -420,6 +548,9 @@ export default function FiltersClient() {
           <code>LEAD_FILTERS.md</code> documents ({docBlocked}). The DB is the live source — update the doc or fix the DB value below.
         </div>
       )}
+
+            {/* Pipeline by State */}
+      <PipelineByStateSection />
 
       {/* Filter groups */}
       {GROUPS.map((group) => {

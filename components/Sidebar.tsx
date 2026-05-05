@@ -3,17 +3,16 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const NAV = [
-  { href: "/dashboard", label: "Dashboard", icon: "âŠž" },
-  { href: "/dashboard?test=1", label: "Test Menu", icon: "T" },
-  { href: "/hot-leads", label: "Hot Leads", icon: "ðŸ”¥" },
-  { href: "/tasks", label: "Tasks", icon: "âœ“" },
-  { href: "/projects", label: "Projects", icon: "â—ˆ" },
-  { href: "/eod", label: "EOD Updates", icon: "ðŸ“‹" },
-  { href: "/standup", label: "Daily Standup", icon: "â°" },
-  { href: "/docs", label: "Docs", icon: "ðŸ“„" },
-  { href: "/filters", label: "Filters", icon: "âš™ï¸" },
-  { href: "/entity-patterns", label: "Entity Patterns", icon: "ðŸ·ï¸" },
-  { href: "/context", label: "Business Context", icon: "ðŸ¢" },
+  { href: "/dashboard", label: "Dashboard", icon: "⊞" },
+  { href: "/hot-leads", label: "Hot Leads", icon: "🔥" },
+  { href: "/tasks", label: "Tasks", icon: "✓" },
+  { href: "/projects", label: "Projects", icon: "◈" },
+  { href: "/eod", label: "EOD Updates", icon: "📋" },
+  { href: "/standup", label: "Daily Standup", icon: "⏰" },
+  { href: "/docs", label: "Docs", icon: "📄" },
+  { href: "/filters", label: "Filters", icon: "⚙️" },
+  { href: "/entity-patterns", label: "Entity Patterns", icon: "🏷️" },
+  { href: "/context", label: "Business Context", icon: "🏢" },
 ];
 
 export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
@@ -90,7 +89,7 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
             onMouseLeave={(e) => (e.currentTarget.style.color = "#8b949e")}
           >
-            â†— {l.label}
+            ↗ {l.label}
           </a>
         ))}
       </div>
@@ -117,7 +116,7 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
             onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
             title="Sign out"
           >
-            â
+            ⏏
           </button>
         </div>
       </div>

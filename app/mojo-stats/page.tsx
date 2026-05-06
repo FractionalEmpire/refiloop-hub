@@ -148,7 +148,7 @@ async function fetchCalls(filters: ReturnType<typeof normalizeFilters>): Promise
     .gte("called_at", startIso(filters.start))
     .lte("called_at", endIso(filters.end))
     .order("called_at", { ascending: false })
-    .limit(250);
+    .limit(1000);
 
   if (filters.disposition !== "all") query.eq("disposition", filters.disposition);
   if (filters.asset === "recordings") query.not("recording_url", "is", null);
@@ -192,7 +192,7 @@ async function fetchRecordings(filters: ReturnType<typeof normalizeFilters>): Pr
     .gte("called_at", startIso(filters.start))
     .lte("called_at", endIso(filters.end))
     .order("called_at", { ascending: false })
-    .limit(200);
+    .limit(1000);
   if (filters.disposition !== "all") query.eq("disposition", filters.disposition);
   if (filters.agent !== "all") query.eq("agent_name", filters.agent);
   if (filters.asset === "recordings") query.not("recording_url", "is", null);

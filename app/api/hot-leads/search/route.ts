@@ -31,7 +31,11 @@ export async function GET(req: NextRequest) {
 
   const capLoanIds = (jnRes.data ?? []).map((r) => r.capitalize_loan_id).filter(Boolean) as number[];
   const loansRes = capLoanIds.length
-    ? await supabase.from("loans").select("id, address, city, state, zip, mortgage_amount, lender_name, property_type, estimated_due_date, due_date, interest_rate, lead_score, display_loan_amount").in("id", capLoanIds)
+    ? await supabase
+        .from("loans")
+        .select("id, address, city, state, zip, mortgage_amount, lender_name, property_type, estimated_due_date, due_date, interest_rate, lead_score, display_loan_amount")
+        .in("id", capLoanIds)
+        .order("due_date", { ascending: true })
     : { data: [] as Record<string, unknown>[], error: null };
 
   const phonesByOwner: Record<number, string[]> = {};
@@ -40,40 +44,52 @@ export async function GET(req: NextRequest) {
     phonesByOwner[p.owner_id].push(p.phone);
   });
 
-  const loanByCapId: Record<number, Record<string, unknown>> = {};
-  (loansRes.data ?? []).forEach((l) => { loanByCapId[l.id as number] = l as Record<string, unknown>; });
+  const loanById: Record<number, Record<string, unknown>> = {};
+  (loansRes.data ?? []).forEach((l) => { loanById[l.id as number] = l as Record<string, unknown>; });
 
-  const loanByOwner: Record<number, Record<string, unknown>> = {};
+  const loansByOwner: Record<number, Record<string, unknown>[]> = {};
   (jnRes.data ?? []).forEach((jn) => {
-    if (jn.capitalize_loan_id && loanByCapId[jn.capitalize_loan_id]) {
-      loanByOwner[jn.owner_id] = loanByCapId[jn.capitalize_loan_id];
-    }
+    const loan = jn.capitalize_loan_id ? loanById[jn.capitalize_loan_id] : null;
+    if (!loan) return;
+    if (!loansByOwner[jn.owner_id]) loansByOwner[jn.owner_id] = [];
+    loansByOwner[jn.owner_id].push(loan);
   });
 
+  for (const ownerId of Object.keys(loansByOwner)) {
+    loansByOwner[Number(ownerId)].sort((a, b) => {
+      const da = (a.due_date ?? a.estimated_due_date ?? "9999") as string;
+      const db = (b.due_date ?? b.estimated_due_date ?? "9999") as string;
+      return da < db ? -1 : da > db ? 1 : 0;
+    });
+  }
+
+  function shapeLoan(loan: Record<string, unknown>) {
+    return {
+      loan_id: loan.id,
+      capitalize_loan_id: loan.id,
+      property_address: loan.address,
+      property_city: loan.city,
+      property_state: loan.state,
+      property_zip: loan.zip,
+      property_type: loan.property_type,
+      loan_amount: loan.display_loan_amount ?? loan.mortgage_amount,
+      loan_amount_num: loan.mortgage_amount ? Number(loan.mortgage_amount) : null,
+      lender_name: loan.lender_name,
+      due_date: loan.due_date ?? loan.estimated_due_date,
+      interest_rate: loan.interest_rate,
+      lead_score: loan.lead_score,
+    };
+  }
+
   const results = (ownersRes.data ?? []).map((owner) => {
-    const loan = loanByOwner[owner.id];
+    const loans = (loansByOwner[owner.id] ?? []).map(shapeLoan);
     const phones = phonesByOwner[owner.id] ?? [];
     return {
       owner_id: owner.id,
       name: owner.name ?? owner.entity_name ?? "Unknown",
       phones,
-      loan: loan
-        ? {
-            loan_id: loan.id,
-            capitalize_loan_id: loan.id,
-            property_address: loan.address,
-            property_city: loan.city,
-            property_state: loan.state,
-            property_zip: loan.zip,
-            property_type: loan.property_type,
-            loan_amount: loan.display_loan_amount ?? loan.mortgage_amount,
-            loan_amount_num: loan.mortgage_amount ? Number(loan.mortgage_amount) : null,
-            lender_name: loan.lender_name,
-            due_date: loan.due_date ?? loan.estimated_due_date,
-            interest_rate: loan.interest_rate,
-            lead_score: loan.lead_score,
-          }
-        : null,
+      loan: loans[0] ?? null,
+      loans,
     };
   });
 

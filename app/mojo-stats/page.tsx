@@ -358,6 +358,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const transcriptCount = calls.filter((call) => call.transcript).length + recordings.filter((recording) => recording.transcript).length;
   const recordingCount = calls.filter((call) => call.recording_url).length + recordings.filter((recording) => recording.recording_url).length;
   const recordingReviewItems = recordings.filter((recording) => recording.recording_url).slice(0, 20);
+  const latestSync = syncBatches[0]?.synced_at ?? null;
 
   return (
     <AppShell user={user}>
@@ -369,6 +370,12 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
               Session results, call outcomes, and recording review from Supabase.
             </p>
           </div>
+        </div>
+
+        <div className="mb-6 rounded-lg border px-4 py-3 text-sm" style={{ background: "#10243a", borderColor: "#1f6feb", color: "#c9d1d9" }}>
+          <span className="font-semibold" style={{ color: "#58a6ff" }}>Data source:</span> Supabase (Mojo session + recording sync).{" "}
+          <span className="font-semibold" style={{ color: "#58a6ff" }}>Last sync:</span> {latestSync ? fmtDateTime(latestSync) : "No sync logged yet"}.{" "}
+          <span className="font-semibold" style={{ color: "#58a6ff" }}>Loaded range:</span> {filters.start} to {filters.end}.
         </div>
 
         <form className="mb-6 grid grid-cols-6 gap-3 rounded-lg border p-4" style={{ background: "#161b22", borderColor: "#30363d" }}>

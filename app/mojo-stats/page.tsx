@@ -485,38 +485,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
               </table>
             </div>
           </section>
-
-          <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
-            <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
-              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Recording Review</h2>
-              <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Audio URLs from Supabase; transcripts are pending.</p>
-            </div>
-            <div className="divide-y" style={{ borderColor: "#21262d" }}>
-              {recordingReviewItems.length === 0 ? (
-                <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No recording rows for this filter yet.</div>
-              ) : (
-                recordingReviewItems.map((item) => {
-                  const href = item.recording_url;
-                  return (
-                    <article key={item.mojo_call_id} className="px-5 py-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{item.contact_name || "Unknown Contact"}</div>
-                          <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
-                            {fmtDateTime(item.called_at)} | {item.agent_name || "All Agents"} | {formatDisposition(item.disposition)} | {item.duration || "0m"}
-                          </div>
-                        </div>
-                        {href ? <a href={href} target="_blank" rel="noreferrer" className="text-xs" style={{ color: "#58a6ff" }}>Open audio</a> : <span className="text-xs" style={{ color: "#484f58" }}>No audio</span>}
-                      </div>
-                      <div className="mt-3 rounded-md p-3 text-xs" style={{ background: "#0d1117", color: "#8b949e", border: "1px solid #30363d" }}>
-                        {item.transcript || "Transcript not available in Supabase yet."}
-                      </div>
-                    </article>
-                  );
-                })
-              )}
-            </div>
-          </section>
         </div>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[0.75fr_1.25fr]">
@@ -583,6 +551,58 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             </div>
           </section>
         </div>
+
+        <section className="mt-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+          <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
+            <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Recording Review</h2>
+            <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Inline listener with Mojo links for quick playback and review.</p>
+          </div>
+          <div className="grid gap-0 lg:grid-cols-2">
+            <div className="border-b lg:border-b-0 lg:border-r" style={{ borderColor: "#21262d" }}>
+              <div className="px-5 py-3 text-xs font-semibold" style={{ color: "#8b949e", borderBottom: "1px solid #21262d" }}>Recorded calls</div>
+              <div className="max-h-[720px] overflow-y-auto divide-y" style={{ borderColor: "#21262d" }}>
+                {recordingReviewItems.length === 0 ? (
+                  <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No recordings for this filter yet.</div>
+                ) : recordingReviewItems.map((item) => (
+                  <div key={item.mojo_call_id} className="px-5 py-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{item.contact_name || "Unknown Contact"}</div>
+                        <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
+                          {fmtDateTime(item.called_at)} | {item.agent_name || "All Agents"} | {formatDisposition(item.disposition)} | {item.duration || "0m"}
+                        </div>
+                      </div>
+                      {item.recording_url ? (
+                        <a href={item.recording_url} target="_blank" rel="noreferrer" className="text-xs" style={{ color: "#58a6ff" }}>Open audio</a>
+                      ) : (
+                        <span className="text-xs" style={{ color: "#484f58" }}>No audio</span>
+                      )}
+                    </div>
+                    <div className="mt-3 rounded-md p-3 text-xs" style={{ background: "#0d1117", color: "#8b949e", border: "1px solid #30363d" }}>
+                      {item.recording_url ? (
+                        <audio controls preload="none" className="w-full">
+                          <source src={item.recording_url} />
+                        </audio>
+                      ) : (
+                        "Recording link unavailable in Supabase."
+                      )}
+                    </div>
+                    <div className="mt-2 text-xs" style={{ color: "#484f58" }}>
+                      Source: {item.source_url ?? "Mojo"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="px-5 py-3 text-xs font-semibold" style={{ color: "#8b949e", borderBottom: "1px solid #21262d" }}>Listener notes</div>
+              <div className="px-5 py-4 text-sm" style={{ color: "#c9d1d9" }}>
+                This panel uses the Mojo recording URL directly, so you can preview audio without downloading it into Supabase.
+                It shows who was recorded, when it happened, the agent, and the call result in one place.
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </AppShell>
   );

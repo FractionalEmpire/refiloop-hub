@@ -26,6 +26,15 @@ interface Lead {
   };
 }
 
+interface Activity {
+  id: number;
+  hot_lead_id: number;
+  type: string;
+  summary: string;
+  created_at: string;
+  created_by: string;
+}
+
 interface SearchResult {
   owner_id: number;
   name: string;
@@ -58,6 +67,15 @@ const STATUS_COLORS: Record<string, { text: string; border: string }> = {
 };
 const NEXT_ACTIONS = ["Callback","Send Email","Send Proposal","Verify Loan Data","Schedule Follow-Up","Add to Pipeline","No Action"];
 const PROPERTY_TYPES = ["Multifamily","Mixed Use","Retail","Office","Industrial","Self Storage","Hotel/Motel","Mobile Home Park","Land","Other"];
+const ACTIVITY_TYPES = ["Call", "Email", "Text", "Meeting", "Note"];
+const ACTIVITY_ICONS: Record<string, string> = {
+  Call: "📞",
+  Email: "✉️",
+  Text: "💬",
+  Meeting: "🤝",
+  Note: "📝",
+};
+
 function daysUntil(dateStr?: string): number | null {
   if (!dateStr) return null;
   return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000);
@@ -73,6 +91,11 @@ function fmtPhone(p: string) {
   const d = p.replace(/\D/g, "");
   return d.length === 10 ? `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}` : p;
 }
+function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) +
+    " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
 function generateEmailDraft(lead: Lead) {
   const f = lead.fields;
   const firstName = (f["Lead Name"] ?? "there").split(" ")[0];
@@ -83,26 +106,7 @@ function generateEmailDraft(lead: Lead) {
   const maturityLine = maturity
     ? `I know your balloon note${lender ? ` with ${lender}` : ""} on ${address} is maturing in ${maturity}${amount ? ` — roughly ${amount}` : ""}.`
     : `I wanted to follow up regarding your property at ${address}.`;
-  return `Subject: Re: Refinancing ${address} — Next Steps
-
-Hi ${firstName},
-
-Great speaking with you earlier. ${maturityLine}
-
-My team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30–60 days, so you'd have a commitment well before the maturity date.
-
-Here's what the next step looks like:
-• 15-minute call to review your property's financials
-• We pull competing term sheets (no cost, no obligation)
-• You pick the best rate and we handle the rest
-
-Are you free for a quick call this week? I can work around your schedule.
-
-Best,
-David
-RefiLoop Commercial Mortgage
-NMLS #2510864
-david@refiloop.com`;
+  return `Subject: Re: Refinancing ${address} — Next Steps\n\nHi ${firstName},\n\nGreat speaking with you earlier. ${maturityLine}\n\nMy team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30–60 days, so you'd have a commitment well before the maturity date.\n\nHere's what the next step looks like:\n• 15-minute call to review your property's financials\n• We pull competing term sheets (no cost, no obligation)\n• You pick the best rate and we handle the rest\n\nAre you free for a quick call this week? I can work around your schedule.\n\nBest,\nDavid\nRefiLoop Commercial Mortgage\nNMLS #2510864\ndavid@refiloop.com`;
 }
 function StatusBadge({ status }: { status?: string }) {
   const s = status ?? "New"; const c = STATUS_COLORS[s] ?? STATUS_COLORS["New"];
@@ -117,6 +121,7 @@ function UrgencyPill({ days }: { days: number | null }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><label className="block text-xs mb-1 font-medium" style={{ color: "#484f58" }}>{label.toUpperCase()}</label>{children}</div>;
 }
+
 export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -127,7 +132,6 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [emailBody, setEmailBody] = useState("");
   const [copied, setCopied] = useState(false);
   const [showNewLead, setShowNewLead] = useState(false);
-  const [callLog, setCallLog] = useState("");
   const [editFields, setEditFields] = useState<Lead["fields"]>({});
   const [addMode, setAddMode] = useState<"search"|"manual">("search");
   const [searchQ, setSearchQ] = useState("");
@@ -136,6 +140,12 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [pickPhone, setPickPhone] = useState("");
   const [callNote, setCallNote] = useState("");
+
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
+  const [activityType, setActivityType] = useState("Call");
+  const [activitySummary, setActivitySummary] = useState("");
+
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
@@ -146,6 +156,14 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const loadActivities = useCallback(async (leadId: string) => {
+    setActivitiesLoading(true);
+    const res = await fetch(`/api/hot-leads/${leadId}/activities`);
+    const data = await res.json();
+    setActivities(Array.isArray(data) ? data : []);
+    setActivitiesLoading(false);
+  }, []);
 
   useEffect(() => {
     if (searchQ.length < 2) { setSearchResults([]); return; }
@@ -161,8 +179,11 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
 
   function openLead(lead: Lead) {
     setSelected(lead); setEditFields({ ...lead.fields });
-    setEmailBody(generateEmailDraft(lead)); setTab("details"); setCallLog("");
+    setEmailBody(generateEmailDraft(lead)); setTab("details");
+    setActivitySummary(""); setActivityType("Call");
+    loadActivities(lead.id);
   }
+
   async function saveFields() {
     if (!selected) return; setSaving(true);
     await fetch(`/api/hot-leads/${selected.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editFields) });
@@ -170,15 +191,26 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     setSelected(prev => prev ? { ...prev, fields: { ...prev.fields, ...editFields } } : null);
     setSaving(false);
   }
-  async function logCall() {
-    if (!selected || !callLog.trim()) return; setSaving(true);
-    const now = new Date().toISOString().split("T")[0];
-    const updates = { "Call Summary": callLog, "Last Contact": now, ...editFields };
-    await fetch(`/api/hot-leads/${selected.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) });
-    setLeads(prev => prev.map(l => l.id === selected.id ? { ...l, fields: { ...l.fields, ...updates } } : l));
-    setSelected(prev => prev ? { ...prev, fields: { ...prev.fields, ...updates } } : null);
-    setEditFields(prev => ({ ...prev, ...updates })); setCallLog(""); setSaving(false);
+
+  async function logActivity() {
+    if (!selected || !activitySummary.trim()) return;
+    setSaving(true);
+    const res = await fetch(`/api/hot-leads/${selected.id}/activities`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: activityType, summary: activitySummary, created_by: user === "david" ? "David" : "Gorjan" }),
+    });
+    if (res.ok) {
+      const newAct = await res.json() as Activity;
+      setActivities(prev => [newAct, ...prev]);
+      const now = new Date().toISOString().split("T")[0];
+      setLeads(prev => prev.map(l => l.id === selected.id ? { ...l, fields: { ...l.fields, "Last Contact": now } } : l));
+      setSelected(prev => prev ? { ...prev, fields: { ...prev.fields, "Last Contact": now } } : null);
+      setActivitySummary("");
+    }
+    setSaving(false);
   }
+
   function copyEmail() { navigator.clipboard.writeText(emailBody); setCopied(true); setTimeout(() => setCopied(false), 2000); }
 
   async function addFromSearch() {
@@ -200,7 +232,9 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     })});
     await load(); resetModal();
   }
+
   const [newLead, setNewLead] = useState({ "Lead Name":"","Property Address":"","Loan Amount":"","Balloon Maturity":"","Lender Name":"","Property Type":"",Status:"New","Call Summary":"","Next Action":"Callback","Assigned To":user==="david"?"David":"Gorjan",Phone:"",Email:"" });
+
   async function createManualLead() {
     setSaving(true);
     const fields: Record<string,string|number> = {};
@@ -209,11 +243,13 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     await fetch("/api/hot-leads", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(fields) });
     await load(); resetModal();
   }
+
   function resetModal() {
     setShowNewLead(false); setSearchQ(""); setSearchResults([]); setSelectedResult(null);
     setPickPhone(""); setCallNote(""); setSaving(false);
     setNewLead({ "Lead Name":"","Property Address":"","Loan Amount":"","Balloon Maturity":"","Lender Name":"","Property Type":"",Status:"New","Call Summary":"","Next Action":"Callback","Assigned To":user==="david"?"David":"Gorjan",Phone:"",Email:"" });
   }
+
   const filtered = statusFilter==="all" ? leads : leads.filter(l => (l.fields.Status??"New")===statusFilter);
   const statusCounts = leads.reduce<Record<string,number>>((acc,l) => { const s=l.fields.Status??"New"; acc[s]=(acc[s]??0)+1; return acc; }, {});
 
@@ -250,7 +286,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     {f.mojo_status&&<span className="text-xs px-1.5 py-0.5 rounded" style={{background:"#0d1117",color:"#58a6ff",border:"1px solid #1f6feb"}}>Mojo: {f.mojo_status}</span>}
                   </div>
                   <div className="text-xs mb-1.5" style={{color:"#8b949e"}}>📍 {f["Property Address"]??"—"}{f["Property Type"]&&<span className="ml-2 px-1.5 py-0.5 rounded" style={{background:"#21262d",color:"#8b949e"}}>{f["Property Type"]}</span>}</div>
-                  {f["Call Summary"]&&<div className="text-xs line-clamp-2 mb-1.5" style={{color:"#8b949e"}}>📞 {f["Call Summary"]}</div>}
+                  {f["Call Summary"]&&<div className="text-xs line-clamp-2 mb-1.5" style={{color:"#8b949e"}}>💬 {f["Call Summary"]}</div>}
                   <div className="flex items-center gap-3 text-xs" style={{color:"#484f58"}}>
                     {f["Loan Amount"]&&<span>💰 {fmt(f["Loan Amount"])}</span>}
                     {f["Lender Name"]&&<span>🏦 {f["Lender Name"]}</span>}
@@ -262,6 +298,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
           })}
         </div>
       </div>
+
       {selected&&(
         <div className="flex flex-col border-l overflow-hidden" style={{width:480,borderColor:"#30363d",background:"#0d1117"}}>
           <div className="flex items-center justify-between px-5 py-4 border-b" style={{borderColor:"#30363d"}}>
@@ -271,7 +308,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
           <div className="flex border-b" style={{borderColor:"#30363d"}}>
             {(["details","email","log"] as const).map(t=>(
               <button key={t} onClick={()=>setTab(t)} className="flex-1 py-2.5 text-xs font-medium capitalize" style={{color:tab===t?"#e6edf3":"#8b949e",borderBottom:tab===t?"2px solid #58a6ff":"2px solid transparent"}}>
-                {t==="details"?"📋 Details":t==="email"?"✉️ Email":"📞 Log Call"}
+                {t==="details"?"📋 Details":t==="email"?"✉️ Email":"🗂 Activity"}
               </button>
             ))}
           </div>
@@ -305,16 +342,67 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
             )}
             {tab==="log"&&(
               <div className="p-5 space-y-4">
-                {selected.fields["Call Summary"]&&<div className="rounded-md p-3" style={{background:"#161b22",border:"1px solid #21262d"}}><div className="text-xs mb-2" style={{color:"#484f58"}}>LAST CALL SUMMARY</div><div className="text-xs" style={{color:"#8b949e"}}>{selected.fields["Call Summary"]}</div>{selected.fields["Last Contact"]&&<div className="text-xs mt-2" style={{color:"#484f58"}}>📅 {selected.fields["Last Contact"]}</div>}</div>}
-                <Field label="New Call Notes"><textarea rows={6} value={callLog} onChange={e=>setCallLog(e.target.value)} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d",resize:"vertical"}} className="w-full rounded px-2 py-1.5 text-sm" placeholder="What happened? Tone, objections, interest level…"/></Field>
-                <Field label="Update Status"><select value={(editFields.Status as string)??"New"} onChange={e=>setEditFields(p=>({...p,Status:e.target.value}))} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm">{STATUSES.map(s=><option key={s}>{s}</option>)}</select></Field>
-                <Field label="Next Action"><select value={(editFields["Next Action"] as string)??""} onChange={e=>setEditFields(p=>({...p,"Next Action":e.target.value}))} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm"><option value="">—</option>{NEXT_ACTIONS.map(a=><option key={a}>{a}</option>)}</select></Field>
-                <button onClick={logCall} disabled={saving||!callLog.trim()} className="w-full py-2 rounded-md text-sm font-medium" style={{background:saving||!callLog.trim()?"#21262d":"#238636",color:saving||!callLog.trim()?"#484f58":"#fff",border:"1px solid #30363d"}}>{saving?"Saving…":"Log Call & Save"}</button>
+                <div className="rounded-lg p-4 space-y-3" style={{background:"#161b22",border:"1px solid #21262d"}}>
+                  <div className="text-xs font-medium" style={{color:"#8b949e"}}>LOG ACTIVITY</div>
+                  <div className="flex gap-1">
+                    {ACTIVITY_TYPES.map(t => (
+                      <button key={t} onClick={()=>setActivityType(t)} className="flex-1 py-1.5 rounded text-xs font-medium" style={{background:activityType===t?"#21262d":"transparent",color:activityType===t?"#e6edf3":"#484f58",border:activityType===t?"1px solid #30363d":"1px solid #21262d"}}>
+                        {ACTIVITY_ICONS[t]} {t}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={activitySummary}
+                    onChange={e=>setActivitySummary(e.target.value)}
+                    style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d",resize:"vertical"}}
+                    className="w-full rounded px-2 py-1.5 text-sm"
+                    placeholder={
+                      activityType==="Call" ? "What happened on the call? Tone, objections, interest level…" :
+                      activityType==="Email" ? "What did you send? Subject, key points…" :
+                      activityType==="Text" ? "What did you text? Their response?" :
+                      activityType==="Meeting" ? "What was discussed? Outcomes, next steps…" :
+                      "Note…"
+                    }
+                  />
+                  <button
+                    onClick={logActivity}
+                    disabled={saving||!activitySummary.trim()}
+                    className="w-full py-2 rounded-md text-sm font-medium"
+                    style={{background:saving||!activitySummary.trim()?"#21262d":"#238636",color:saving||!activitySummary.trim()?"#484f58":"#fff",border:"1px solid #30363d"}}
+                  >
+                    {saving?"Saving…":`Log ${activityType}`}
+                  </button>
+                </div>
+                <div>
+                  <div className="text-xs font-medium mb-3" style={{color:"#484f58"}}>HISTORY</div>
+                  {activitiesLoading ? (
+                    <div className="text-xs py-4 text-center" style={{color:"#484f58"}}>Loading…</div>
+                  ) : activities.length === 0 ? (
+                    <div className="text-xs py-4 text-center" style={{color:"#484f58"}}>No activity yet — log the first interaction above.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {activities.map(act => (
+                        <div key={act.id} className="rounded-md p-3" style={{background:"#161b22",border:"1px solid #21262d"}}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs font-medium" style={{color:"#e6edf3"}}>
+                              {ACTIVITY_ICONS[act.type] ?? "•"} {act.type}
+                            </span>
+                            <span className="text-xs" style={{color:"#484f58"}}>{fmtDateTime(act.created_at)}</span>
+                          </div>
+                          <div className="text-xs" style={{color:"#8b949e",lineHeight:1.5}}>{act.summary}</div>
+                          <div className="text-xs mt-1.5" style={{color:"#484f58"}}>{act.created_by}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
+
       {showNewLead&&(
         <div className="fixed inset-0 flex items-center justify-center z-50" style={{background:"rgba(0,0,0,0.75)"}} onClick={e=>{if(e.target===e.currentTarget)resetModal();}}>
           <div className="rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" style={{background:"#161b22",border:"1px solid #30363d"}}>
@@ -375,4 +463,4 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
       )}
     </div>
   );
-      }
+}

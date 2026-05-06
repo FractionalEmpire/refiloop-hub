@@ -47,6 +47,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [runTaskId, setRunTaskId] = useState<string | null>(null);
   const [runModel, setRunModel] = useState("claude-sonnet-4-6");
   const [dragOverStatus, setDragOverStatus] = useState<string | null>(null);
+  const [showAllDone, setShowAllDone] = useState(false);
   const dragTaskId = useRef<string | null>(null);
 
   const MODELS = [
@@ -156,10 +157,16 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (typeFilter !== "all" && (t.type || "task") !== typeFilter) return false;
     return true;
   });
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
   const grouped = STATUSES.reduce((acc, s) => {
-    acc[s] = visibleTasks
-      .filter((t) => t.status === s)
-      .sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
+    let statusTasks = visibleTasks.filter((t) => t.status === s);
+    if (s === "done" && !showAllDone) {
+      statusTasks = statusTasks.filter((t) => {
+        const date = t.completed_at || t.updated_at;
+        return date ? new Date(date) >= threeDaysAgo : false;
+      });
+    }
+    acc[s] = statusTasks.sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
     return acc;
   }, {} as Record<string, Task[]>);
 
@@ -421,6 +428,15 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   {STATUS_LABELS[status]}
                 </span>
                 <span className="text-xs" style={{ color: "#484f58" }}>({grouped[status].length})</span>
+                {status === "done" && (
+                  <button
+                    onClick={() => setShowAllDone((v) => !v)}
+                    className="ml-auto text-xs"
+                    style={{ color: showAllDone ? "#58a6ff" : "#484f58" }}
+                  >
+                    {showAllDone ? "← 3 days" : `all (${visibleTasks.filter(t => t.status === "done").length})`}
+                  </button>
+                )}
               </div>
               <div className="space-y-2">
                 {grouped[status].map((task) => (

@@ -428,9 +428,28 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           ))}
         </div>
 
-        <div className="mb-6 rounded-lg border px-4 py-3 text-sm" style={{ background: "#201a10", borderColor: "#6e500f", color: "#d29922" }}>
-          Transcripts are not in Supabase yet. Mojo exposes recording audio URLs now; transcript summaries will appear here after we add the transcription step.
-        </div>
+        <section className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+          <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
+            <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Latest Sync Logs (Last 5)</h2>
+            <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Most recent Mojo-to-Supabase sync runs.</p>
+          </div>
+          <div className="divide-y" style={{ borderColor: "#21262d" }}>
+            {syncBatches.length === 0 ? (
+              <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No sync logs yet.</div>
+            ) : (
+              syncBatches.slice(0, 5).map((batch) => (
+                <div key={batch.id} className="px-5 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-semibold" style={{ color: statusColor(batch.success) }}>{batch.success ? "Success" : "Failed"}</span>
+                    <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(batch.synced_at)}</span>
+                  </div>
+                  <div className="mt-1 text-xs" style={{ color: "#c9d1d9" }}>{fmtCount(batch.records_pushed)} rows pushed, {fmtCount(batch.bd_ids_created)} inserted</div>
+                  <div className="mt-1 text-xs" style={{ color: "#484f58" }}>{batch.message ?? "No message"}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
 
         <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
           <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>

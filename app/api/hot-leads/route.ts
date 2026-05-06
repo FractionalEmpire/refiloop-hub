@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
-function toRecord(row) {
+function toRecord(row: Record<string, unknown>) {
   return {
     id: String(row.id),
     fields: {
@@ -70,4 +70,4 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabase.from("hot_leads").insert(row).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(toRecord(data));
-    }
+}

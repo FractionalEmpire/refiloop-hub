@@ -374,6 +374,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
 
         <div className="mb-6 rounded-lg border px-4 py-3 text-sm" style={{ background: "#10243a", borderColor: "#1f6feb", color: "#c9d1d9" }}>
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Data source:</span> Supabase (Mojo session + recording sync).{" "}
+          <span className="font-semibold" style={{ color: "#58a6ff" }}>Auto-sync:</span> VPS cron every 30 minutes.{" "}
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Last sync:</span> {latestSync ? fmtDateTime(latestSync) : "No sync logged yet"}.{" "}
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Loaded range:</span> {filters.start} to {filters.end}.
         </div>

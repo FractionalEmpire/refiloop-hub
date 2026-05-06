@@ -69,6 +69,19 @@ type SessionSummary = {
   top_dispositions: string;
 };
 
+type MojoRecording = {
+  id: number;
+  mojo_call_id: string;
+  agent_name: string | null;
+  contact_name: string | null;
+  called_at: string | null;
+  disposition: string | null;
+  duration: string | null;
+  recording_url: string | null;
+  transcript: string | null;
+  source_url: string | null;
+};
+
 const MOJO_SOURCES = ["mojo", "mojo_sheet_push"];
 const CONNECTED_DISPOSITIONS = [
   "Interested - Send Info",
@@ -169,6 +182,23 @@ async function fetchSyncBatches(): Promise<SyncBatch[]> {
     .limit(10);
   if (error) throw error;
   return (data ?? []) as SyncBatch[];
+}
+
+async function fetchRecordings(filters: ReturnType<typeof normalizeFilters>): Promise<MojoRecording[]> {
+  const query = supabase
+    .from("mojo_call_recordings")
+    .select("id,mojo_call_id,agent_name,contact_name,called_at,disposition,duration,recording_url,transcript,source_url")
+    .gte("called_at", startIso(filters.start))
+    .lte("called_at", endIso(filters.end))
+    .order("called_at", { ascending: false })
+    .limit(200);
+  if (filters.disposition !== "all") query.eq("disposition", filters.disposition);
+  if (filters.agent !== "all") query.eq("agent_name", filters.agent);
+  if (filters.asset === "recordings") query.not("recording_url", "is", null);
+  if (filters.asset === "transcripts") query.not("transcript", "is", null);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as MojoRecording[];
 }
 
 async function fetchTargets(table: "owners" | "entities", ids: number[]): Promise<Map<number, Target>> {
@@ -295,9 +325,10 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
 
   const filters = normalizeFilters(searchParams);
 
-  const [syncBatches, rawCalls] = await Promise.all([
+  const [syncBatches, rawCalls, recordings] = await Promise.all([
     safe(fetchSyncBatches, []),
     safe(() => fetchCalls(filters), []),
+    safe(() => fetchRecordings(filters), []),
   ]);
 
   const ownerIds = Array.from(new Set(rawCalls.map((call) => call.owner_id).filter(Boolean))) as number[];
@@ -317,14 +348,16 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const agentOptions = unique([
     ...allCalls.map((call) => call.agent_name).filter((agent) => agent !== "All Agents"),
     ...sessions.map((session) => session.agent).filter((agent) => agent !== "All Agents"),
+    ...recordings.map((recording) => recording.agent_name || "All Agents").filter((agent) => agent !== "All Agents"),
   ]);
   const dispositionOptions = unique([
     ...allCalls.map((call) => call.disposition),
+    ...recordings.map((recording) => recording.disposition),
   ]);
   const connectedCalls = calls.filter(isConnectedCall);
-  const transcriptCount = calls.filter((call) => call.transcript).length;
-  const recordingCount = calls.filter((call) => call.recording_url).length;
-  const recordingReviewItems = connectedCalls.filter((call) => call.recording_url).slice(0, 15);
+  const transcriptCount = calls.filter((call) => call.transcript).length + recordings.filter((recording) => recording.transcript).length;
+  const recordingCount = calls.filter((call) => call.recording_url).length + recordings.filter((recording) => recording.recording_url).length;
+  const recordingReviewItems = recordings.filter((recording) => recording.recording_url).slice(0, 20);
 
   return (
     <AppShell user={user}>
@@ -437,18 +470,18 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                 recordingReviewItems.map((item) => {
                   const href = item.recording_url;
                   return (
-                    <article key={item.id} className="px-5 py-4">
+                    <article key={item.mojo_call_id} className="px-5 py-4">
                       <div className="flex items-start justify-between gap-4">
                         <div>
-                          <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{item.target_name}</div>
+                          <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{item.contact_name || "Unknown Contact"}</div>
                           <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
-                            {fmtDateTime(item.called_at)} | {item.agent_name} | {formatDisposition(item.disposition)} | {item.call_duration_sec ? fmtDuration(item.call_duration_sec) : "0m"}
+                            {fmtDateTime(item.called_at)} | {item.agent_name || "All Agents"} | {formatDisposition(item.disposition)} | {item.duration || "0m"}
                           </div>
                         </div>
                         {href ? <a href={href} target="_blank" rel="noreferrer" className="text-xs" style={{ color: "#58a6ff" }}>Open audio</a> : <span className="text-xs" style={{ color: "#484f58" }}>No audio</span>}
                       </div>
                       <div className="mt-3 rounded-md p-3 text-xs" style={{ background: "#0d1117", color: "#8b949e", border: "1px solid #30363d" }}>
-                        Transcript not available in Supabase yet.
+                        {item.transcript || "Transcript not available in Supabase yet."}
                       </div>
                     </article>
                   );

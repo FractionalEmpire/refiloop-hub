@@ -541,20 +541,21 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
 
           <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
             <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
-              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Mojo Call Outcomes</h2>
+              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Detail Report</h2>
+              <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Rows pulled from Mojo call detail and stored in Supabase for Hub review.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr style={{ color: "#8b949e", borderBottom: "1px solid #30363d" }}>
-                    {["When", "Agent", "Target", "Disposition", "Follow-up", "Attempts"].map((header) => (
+                    {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Attempts", "Source"].map((header) => (
                       <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {calls.length === 0 ? (
-                    <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={6}>No Mojo call rows for this filter.</td></tr>
+                    <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={8}>No call-detail rows for this filter.</td></tr>
                   ) : calls.slice(0, 40).map((call) => (
                     <tr key={call.id} style={{ borderBottom: "1px solid #21262d" }}>
                       <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</td>
@@ -563,9 +564,17 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                         <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{call.target_name}</div>
                         <div className="text-xs" style={{ color: "#484f58" }}>{call.phone_number ?? "Unknown phone"}</div>
                       </td>
+                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.phone_number ?? "Unknown"}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{formatDisposition(call.disposition)}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDate(call.follow_up_date)}</td>
+                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
+                        {call.recording_url ? (
+                          <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Open audio</a>
+                        ) : (
+                          "None"
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtCount(call.total_call_attempts)}</td>
+                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.source ?? "mojo"}</td>
                     </tr>
                   ))}
                 </tbody>

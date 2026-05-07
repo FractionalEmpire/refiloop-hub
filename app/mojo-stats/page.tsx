@@ -56,6 +56,8 @@ type DisplayCall = CallAttempt & {
   outreach_status: string | null;
   total_call_attempts: number | null;
   follow_up_date: string | null;
+  recording_contact_name: string | null;
+  recording_source_url: string | null;
 };
 
 type SessionSummary = {
@@ -98,7 +100,6 @@ const ASSET_OPTIONS = [
   { value: "all", label: "All rows" },
   { value: "connected", label: "Connected/reviewable" },
   { value: "recordings", label: "Has recording" },
-  { value: "transcripts", label: "Has transcript" },
 ];
 
 async function safe<T>(task: () => Promise<T>, fallback: T): Promise<T> {
@@ -152,7 +153,6 @@ async function fetchCalls(filters: ReturnType<typeof normalizeFilters>): Promise
 
   if (filters.disposition !== "all") query.eq("disposition", filters.disposition);
   if (filters.asset === "recordings") query.not("recording_url", "is", null);
-  if (filters.asset === "transcripts") query.not("transcript", "is", null);
 
   const { data, error } = await query;
   if (!error) return (data ?? []) as CallAttempt[];
@@ -196,7 +196,6 @@ async function fetchRecordings(filters: ReturnType<typeof normalizeFilters>): Pr
   if (filters.disposition !== "all") query.eq("disposition", filters.disposition);
   if (filters.agent !== "all") query.eq("agent_name", filters.agent);
   if (filters.asset === "recordings") query.not("recording_url", "is", null);
-  if (filters.asset === "transcripts") query.not("transcript", "is", null);
   const { data, error } = await query;
   if (error) throw error;
   return (data ?? []) as MojoRecording[];
@@ -285,12 +284,18 @@ function buildDisplayCalls(calls: CallAttempt[], owners: Map<number, Target>, en
         entity?.next_call_date ??
         entity?.parked_until ??
         null,
+      recording_contact_name: null,
+      recording_source_url: null,
     };
   });
 }
 
 function unique(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b));
+}
+
+function isNoContact(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase() === "no contact";
 }
 
 function buildSessionSummaries(calls: DisplayCall[]): SessionSummary[] {
@@ -340,10 +345,19 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   ]);
 
   const allCalls = buildDisplayCalls(rawCalls, owners, entities);
+  const recordingByCallId = new Map(recordings.map((recording) => [recording.mojo_call_id, recording]));
   const calls = allCalls.filter((call) => {
     if (filters.agent !== "all" && call.agent_name !== filters.agent) return false;
     if (filters.asset === "connected" && !isConnectedCall(call)) return false;
+    if (isNoContact(call.outreach_status)) return false;
     return true;
+  }).map((call) => {
+    const recording = call.mojo_call_id ? recordingByCallId.get(call.mojo_call_id) : null;
+    return {
+      ...call,
+      recording_contact_name: recording?.contact_name ?? null,
+      recording_source_url: recording?.source_url ?? null,
+    };
   });
   const sessions = buildSessionSummaries(calls);
   const agentOptions = unique([
@@ -356,7 +370,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     ...recordings.map((recording) => recording.disposition),
   ]);
   const connectedCalls = calls.filter(isConnectedCall);
-  const transcriptCount = calls.filter((call) => call.transcript).length + recordings.filter((recording) => recording.transcript).length;
   const recordingCount = calls.filter((call) => call.recording_url).length + recordings.filter((recording) => recording.recording_url).length;
   const recordingReviewItems = recordings.filter((recording) => recording.recording_url).slice(0, 20);
   const latestSync = syncBatches[0]?.synced_at ?? null;
@@ -380,38 +393,51 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Loaded range:</span> {filters.start} to {filters.end}.
         </div>
 
-        <form className="mb-6 grid grid-cols-6 gap-3 rounded-lg border p-4" style={{ background: "#161b22", borderColor: "#30363d" }}>
-          <label className="text-xs" style={{ color: "#8b949e" }}>
-            Start
-            <input name="start" type="date" defaultValue={filters.start} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }} />
-          </label>
-          <label className="text-xs" style={{ color: "#8b949e" }}>
-            End
-            <input name="end" type="date" defaultValue={filters.end} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }} />
-          </label>
-          <label className="text-xs" style={{ color: "#8b949e" }}>
-            Agent
-            <select name="agent" defaultValue={filters.agent} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
-              <option value="all">All Agents</option>
-              {agentOptions.map((agent) => <option key={agent} value={agent}>{agent}</option>)}
-            </select>
-          </label>
-          <label className="text-xs" style={{ color: "#8b949e" }}>
-            Disposition
-            <select name="disposition" defaultValue={filters.disposition} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
-              <option value="all">All Results</option>
-              {dispositionOptions.map((disposition) => <option key={disposition} value={disposition}>{formatDisposition(disposition)}</option>)}
-            </select>
-          </label>
-          <label className="text-xs" style={{ color: "#8b949e" }}>
-            View
-            <select name="asset" defaultValue={filters.asset} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
-              {ASSET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-          <div className="flex items-end gap-2">
-            <button className="w-full rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#238636", color: "#fff" }}>Apply</button>
-            <a href="/mojo-stats" className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}>Reset</a>
+        <form className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+          <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Filters</h2>
+                <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Scope the report by date, agent, disposition, and whether recordings exist.</p>
+              </div>
+              <div className="rounded-full border px-3 py-1 text-[11px] font-medium" style={{ background: "#0d1117", color: "#8b949e", borderColor: "#30363d" }}>
+                {fmtCount(calls.length)} matching calls
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-3 px-5 py-4 md:grid-cols-2 xl:grid-cols-6">
+            <label className="text-xs" style={{ color: "#8b949e" }}>
+              Start
+              <input name="start" type="date" defaultValue={filters.start} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }} />
+            </label>
+            <label className="text-xs" style={{ color: "#8b949e" }}>
+              End
+              <input name="end" type="date" defaultValue={filters.end} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }} />
+            </label>
+            <label className="text-xs" style={{ color: "#8b949e" }}>
+              Agent
+              <select name="agent" defaultValue={filters.agent} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
+                <option value="all">All Agents</option>
+                {agentOptions.map((agent) => <option key={agent} value={agent}>{agent}</option>)}
+              </select>
+            </label>
+            <label className="text-xs" style={{ color: "#8b949e" }}>
+              Disposition
+              <select name="disposition" defaultValue={filters.disposition} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
+                <option value="all">All Results</option>
+                {dispositionOptions.map((disposition) => <option key={disposition} value={disposition}>{formatDisposition(disposition)}</option>)}
+              </select>
+            </label>
+            <label className="text-xs" style={{ color: "#8b949e" }}>
+              View
+              <select name="asset" defaultValue={filters.asset} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
+                {ASSET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <div className="flex items-end gap-2 xl:col-span-2">
+              <button className="w-full rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#238636", color: "#fff" }}>Apply</button>
+              <a href="/mojo-stats" className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}>Reset</a>
+            </div>
           </div>
         </form>
 
@@ -420,7 +446,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             { label: "Mojo outcomes", value: calls.length, color: "#58a6ff" },
             { label: "Session rows", value: sessions.length, color: "#3fb950" },
             { label: "Recordings", value: recordingCount, color: "#d29922" },
-            { label: "Transcripts", value: transcriptCount, color: "#a371f7" },
+            { label: "Connected", value: connectedCalls.length, color: "#a371f7" },
           ].map((metric) => (
             <section key={metric.label} className="rounded-lg border p-4" style={{ background: "#161b22", borderColor: "#30363d" }}>
               <div className="text-2xl font-bold" style={{ color: metric.color }}>{fmtCount(metric.value)}</div>
@@ -452,7 +478,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           </div>
         </section>
 
-        <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
+        <div className="grid gap-6 xl:grid-cols-2">
           <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
             <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
               <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Session Results</h2>
@@ -485,9 +511,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
               </table>
             </div>
           </section>
-        </div>
-
-        <div className="mt-6 grid gap-6 lg:grid-cols-[0.75fr_1.25fr]">
           <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
             <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
               <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Reverse Sync Batches</h2>
@@ -507,8 +530,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
               ))}
             </div>
           </section>
-
-          <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+        <section className="mt-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
             <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
               <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Detail Report</h2>
               <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Rows pulled from Mojo call detail and stored in Supabase for Hub review.</p>
@@ -517,14 +539,14 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
               <table className="min-w-full text-sm">
                 <thead>
                   <tr style={{ color: "#8b949e", borderBottom: "1px solid #30363d" }}>
-                    {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Attempts", "Source"].map((header) => (
+                    {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Preview", "Attempts", "Source"].map((header) => (
                       <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {calls.length === 0 ? (
-                    <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={8}>No call-detail rows for this filter.</td></tr>
+                    <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={9}>No call-detail rows for this filter.</td></tr>
                   ) : calls.slice(0, 40).map((call) => (
                     <tr key={call.id} style={{ borderBottom: "1px solid #21262d" }}>
                       <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</td>
@@ -537,9 +559,24 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                       <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{formatDisposition(call.disposition)}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
                         {call.recording_url ? (
-                          <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Open audio</a>
+                          <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Mojo audio</a>
                         ) : (
                           "None"
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
+                        {call.recording_url ? (
+                          <div className="min-w-[240px]">
+                            <audio controls preload="none" className="w-full">
+                              <source src={call.recording_url} />
+                            </audio>
+                            <div className="mt-1 text-[11px]" style={{ color: "#484f58" }}>
+                              {call.recording_contact_name ?? call.target_name}
+                              {call.recording_source_url ? ` · ${call.recording_source_url}` : ""}
+                            </div>
+                          </div>
+                        ) : (
+                          "No preview"
                         )}
                       </td>
                       <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtCount(call.total_call_attempts)}</td>

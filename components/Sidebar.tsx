@@ -3,12 +3,12 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const NAV = [
-  { href: "/mojo-stats", label: "Mojo Stats", icon: "M" },
   { href: "/dashboard", label: "Dashboard", icon: "⊞" },
   { href: "/hot-leads", label: "Hot Leads", icon: "🔥" },
   { href: "/tasks", label: "Tasks", icon: "✓" },
   { href: "/projects", label: "Projects", icon: "◈" },
   { href: "/eod", label: "EOD Updates", icon: "📋" },
+  { href: "/call-notes", label: "Call Notes", icon: "📞" },
   { href: "/standup", label: "Daily Standup", icon: "⏰" },
   { href: "/docs", label: "Docs", icon: "📄" },
   { href: "/analytics", label: "Analytics", icon: "📊" },
@@ -124,4 +124,4 @@ export default function Sidebar({ user }: { user: "david" | "gorjan" }) {
       </div>
     </aside>
   );
-}
+                                  }

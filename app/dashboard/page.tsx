@@ -48,9 +48,10 @@ export default async function DashboardPage() {
     { number: "346-646-3390", label: "TX Houston (Kirk)",  areaState: "TX", calls: 172, rgAddedDate: "2026-05-05" },
     { number: "919-892-3024", label: "NC 919",            areaState: "NC", calls: 0,   rgAddedDate: "2026-05-06" },
   ];
+  // Loan counts by state (loans table — full pipeline, not just skip-traced owners)
   const stateOwners = [
-    { state: "GA", count: 5121 }, { state: "FL", count: 1248 }, { state: "TX", count: 1024 },
-    { state: "CA", count: 694 },  { state: "NC", count: 241 },  { state: "TN", count: 156 }, { state: "AL", count: 150 },
+    { state: "TX", count: 72647 }, { state: "FL", count: 61523 }, { state: "NC", count: 33537 },
+    { state: "OH", count: 31128 }, { state: "GA", count: 17216 }, { state: "SC", count: 16291 }, { state: "TN", count: 16135 },
   ];
   const coveredStates = new Set(callerIds.map((c) => c.areaState));
   function getRgStatus(addedDate: string) {

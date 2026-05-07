@@ -11,6 +11,7 @@ type SearchParams = {
   agent?: string;
   disposition?: string;
   asset?: string;
+  page?: string;
 };
 
 type SyncBatch = {
@@ -129,6 +130,7 @@ function normalizeFilters(params: SearchParams) {
     agent: params.agent || "all",
     disposition: params.disposition || "all",
     asset: params.asset || "all",
+    page: params.page || "1",
   };
 }
 
@@ -371,8 +373,12 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   ]);
   const connectedCalls = calls.filter(isConnectedCall);
   const recordingCount = calls.filter((call) => call.recording_url).length + recordings.filter((recording) => recording.recording_url).length;
-  const recordingReviewItems = recordings.filter((recording) => recording.recording_url).slice(0, 20);
   const latestSync = syncBatches[0]?.synced_at ?? null;
+  const pageSize = 20;
+  const currentPage = Math.max(1, Number(filters.page ?? "1") || 1);
+  const totalPages = Math.max(1, Math.ceil(calls.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedCalls = calls.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
     <AppShell user={user}>
@@ -530,113 +536,87 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
               ))}
             </div>
           </section>
-        <section className="mt-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
-            <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
-              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Detail Report</h2>
-              <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Rows pulled from Mojo call detail and stored in Supabase for Hub review.</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr style={{ color: "#8b949e", borderBottom: "1px solid #30363d" }}>
-                    {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Preview", "Attempts", "Source"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {calls.length === 0 ? (
-                    <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={9}>No call-detail rows for this filter.</td></tr>
-                  ) : calls.slice(0, 40).map((call) => (
-                    <tr key={call.id} style={{ borderBottom: "1px solid #21262d" }}>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.agent_name}</td>
-                      <td className="px-4 py-3">
-                        <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{call.target_name}</div>
-                        <div className="text-xs" style={{ color: "#484f58" }}>{call.phone_number ?? "Unknown phone"}</div>
-                      </td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.phone_number ?? "Unknown"}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{formatDisposition(call.disposition)}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
-                        {call.recording_url ? (
-                          <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Mojo audio</a>
-                        ) : (
-                          "None"
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
-                        {call.recording_url ? (
-                          <div className="min-w-[240px]">
-                            <audio controls preload="none" className="w-full">
-                              <source src={call.recording_url} />
-                            </audio>
-                            <div className="mt-1 text-[11px]" style={{ color: "#484f58" }}>
-                              {call.recording_contact_name ?? call.target_name}
-                              {call.recording_source_url ? ` · ${call.recording_source_url}` : ""}
-                            </div>
-                          </div>
-                        ) : (
-                          "No preview"
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtCount(call.total_call_attempts)}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.source ?? "mojo"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
         </div>
-
         <section className="mt-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
           <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
-            <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Recording Review</h2>
-            <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Inline listener with Mojo links for quick playback and review.</p>
-          </div>
-          <div className="grid gap-0 lg:grid-cols-2">
-            <div className="border-b lg:border-b-0 lg:border-r" style={{ borderColor: "#21262d" }}>
-              <div className="px-5 py-3 text-xs font-semibold" style={{ color: "#8b949e", borderBottom: "1px solid #21262d" }}>Recorded calls</div>
-              <div className="max-h-[720px] overflow-y-auto divide-y" style={{ borderColor: "#21262d" }}>
-                {recordingReviewItems.length === 0 ? (
-                  <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No recordings for this filter yet.</div>
-                ) : recordingReviewItems.map((item) => (
-                  <div key={item.mojo_call_id} className="px-5 py-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{item.contact_name || "Unknown Contact"}</div>
-                        <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
-                          {fmtDateTime(item.called_at)} | {item.agent_name || "All Agents"} | {formatDisposition(item.disposition)} | {item.duration || "0m"}
-                        </div>
-                      </div>
-                      {item.recording_url ? (
-                        <a href={item.recording_url} target="_blank" rel="noreferrer" className="text-xs" style={{ color: "#58a6ff" }}>Open audio</a>
-                      ) : (
-                        <span className="text-xs" style={{ color: "#484f58" }}>No audio</span>
-                      )}
-                    </div>
-                    <div className="mt-3 rounded-md p-3 text-xs" style={{ background: "#0d1117", color: "#8b949e", border: "1px solid #30363d" }}>
-                      {item.recording_url ? (
-                        <audio controls preload="none" className="w-full">
-                          <source src={item.recording_url} />
-                        </audio>
-                      ) : (
-                        "Recording link unavailable in Supabase."
-                      )}
-                    </div>
-                    <div className="mt-2 text-xs" style={{ color: "#484f58" }}>
-                      Source: {item.source_url ?? "Mojo"}
-                    </div>
-                  </div>
-                ))}
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Detail Report</h2>
+                <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Rows pulled from Mojo call detail and stored in Supabase for Hub review.</p>
               </div>
+              <div className="text-xs" style={{ color: "#8b949e" }}>Page {safePage} of {totalPages}</div>
             </div>
-            <div>
-              <div className="px-5 py-3 text-xs font-semibold" style={{ color: "#8b949e", borderBottom: "1px solid #21262d" }}>Listener notes</div>
-              <div className="px-5 py-4 text-sm" style={{ color: "#c9d1d9" }}>
-                This panel uses the Mojo recording URL directly, so you can preview audio without downloading it into Supabase.
-                It shows who was recorded, when it happened, the agent, and the call result in one place.
-              </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr style={{ color: "#8b949e", borderBottom: "1px solid #30363d" }}>
+                  {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Preview", "Attempts", "Source"].map((header) => (
+                    <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pagedCalls.length === 0 ? (
+                  <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={9}>No call-detail rows for this filter.</td></tr>
+                ) : pagedCalls.map((call) => (
+                  <tr key={call.id} style={{ borderBottom: "1px solid #21262d" }}>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.agent_name}</td>
+                    <td className="px-4 py-3">
+                      <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{call.target_name}</div>
+                      <div className="text-xs" style={{ color: "#484f58" }}>{call.phone_number ?? "Unknown phone"}</div>
+                    </td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.phone_number ?? "Unknown"}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{formatDisposition(call.disposition)}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
+                      {call.recording_url ? (
+                        <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Mojo audio</a>
+                      ) : (
+                        "None"
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
+                      {call.recording_url ? (
+                        <div className="min-w-[240px]">
+                          <audio controls preload="none" className="w-full">
+                            <source src={call.recording_url} />
+                          </audio>
+                          <div className="mt-1 text-[11px]" style={{ color: "#484f58" }}>
+                            {call.recording_contact_name ?? call.target_name}
+                            {call.recording_source_url ? ` | ${call.recording_source_url}` : ""}
+                          </div>
+                        </div>
+                      ) : (
+                        "No preview"
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtCount(call.total_call_attempts)}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.source ?? "mojo"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t px-5 py-4" style={{ borderColor: "#30363d" }}>
+            <div className="text-xs" style={{ color: "#8b949e" }}>
+              Showing {pagedCalls.length ? (safePage - 1) * pageSize + 1 : 0} - {(safePage - 1) * pageSize + pagedCalls.length} of {calls.length}
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href={`/mojo-stats?start=${filters.start}&end=${filters.end}&agent=${encodeURIComponent(filters.agent)}&disposition=${encodeURIComponent(filters.disposition)}&asset=${encodeURIComponent(filters.asset)}&page=${Math.max(1, safePage - 1)}`}
+                className="rounded-md px-3 py-2 text-xs font-semibold"
+                style={{ background: safePage === 1 ? "#0d1117" : "#21262d", color: "#c9d1d9", border: "1px solid #30363d", pointerEvents: safePage === 1 ? "none" : "auto", opacity: safePage === 1 ? 0.5 : 1 }}
+              >
+                Prev
+              </a>
+              <a
+                href={`/mojo-stats?start=${filters.start}&end=${filters.end}&agent=${encodeURIComponent(filters.agent)}&disposition=${encodeURIComponent(filters.disposition)}&asset=${encodeURIComponent(filters.asset)}&page=${Math.min(totalPages, safePage + 1)}`}
+                className="rounded-md px-3 py-2 text-xs font-semibold"
+                style={{ background: safePage === totalPages ? "#0d1117" : "#21262d", color: "#c9d1d9", border: "1px solid #30363d", pointerEvents: safePage === totalPages ? "none" : "auto", opacity: safePage === totalPages ? 0.5 : 1 }}
+              >
+                Next
+              </a>
             </div>
           </div>
         </section>

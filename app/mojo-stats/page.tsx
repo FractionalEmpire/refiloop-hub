@@ -641,14 +641,14 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             <table className="min-w-full text-sm">
               <thead>
                 <tr style={{ color: "#8b949e", borderBottom: "1px solid #30363d" }}>
-                  {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Preview", "Attempts", "Source"].map((header) => (
-                    <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
-                  ))}
+                    {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Attempts", "Source"].map((header) => (
+                      <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
+                    ))}
                 </tr>
               </thead>
               <tbody>
                 {pagedCalls.length === 0 ? (
-                  <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={9}>No call-detail rows for this filter.</td></tr>
+                  <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={8}>No call-detail rows for this filter.</td></tr>
                 ) : pagedCalls.map((call) => (
                   <tr key={call.id} style={{ borderBottom: "1px solid #21262d" }}>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</td>
@@ -661,24 +661,20 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                     <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{formatDisposition(call.disposition)}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
                       {call.recording_url ? (
-                        <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Mojo audio</a>
-                      ) : (
-                        "None"
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
-                      {call.recording_url ? (
-                        <div className="min-w-[240px]">
-                          <audio controls preload="none" className="w-full">
-                            <source src={call.recording_url} />
-                          </audio>
+                        <div className="min-w-[220px]">
+                          <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Mojo audio</a>
+                          <div className="mt-1">
+                            <audio controls preload="none" className="w-full">
+                              <source src={call.recording_url} />
+                            </audio>
+                          </div>
                           <div className="mt-1 text-[11px]" style={{ color: "#484f58" }}>
                             {call.recording_contact_name ?? call.target_name}
                             {call.recording_source_url ? ` | ${call.recording_source_url}` : ""}
                           </div>
                         </div>
                       ) : (
-                        "No preview"
+                        "None"
                       )}
                     </td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtCount(call.total_call_attempts)}</td>

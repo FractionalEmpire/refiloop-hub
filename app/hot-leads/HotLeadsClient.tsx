@@ -1,11 +1,26 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 
-// ââ Types ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-interface ActivityEntry {
-  type: string; // "Call" | "Email" | "Text" | "Meeting" | "Note"
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+// Activity stored in hot_lead_activities table
+interface DbActivity {
+  id: number;
+  hot_lead_id: number;
+  type: string;
+  summary: string;
+  created_by: string;
+  created_at: string;
+  direction?: string;       // "outgoing" | "incoming"
+  gmail_message_id?: string;
+  gmail_thread_id?: string;
+}
+
+// Legacy JSON format kept for backward-compat parse
+interface LegacyEntry {
+  type: string;
   text: string;
-  ts: string;   // ISO timestamp
+  ts: string;
 }
 
 interface Lead {
@@ -27,12 +42,12 @@ interface Lead {
     "Borrower Entity"?: string;
     Email?: string;
     Phone?: string;
-    Notes?: string;          // stores JSON ActivityEntry[] for activity log
-    "Connected Via"?: string; // "Phone" | "Email" | ""
+    Notes?: string;
+    "Connected Via"?: string;
   };
 }
 
-// ââ Constants ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Constants ────────────────────────────────────────────────────────────────
 const STATUSES = ["New", "Follow-Up", "Proposal Sent", "Engaged", "Closed Won", "Dead"];
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -57,14 +72,14 @@ const PROPERTY_TYPES = [
 const ACTIVITY_TYPES = ["Call", "Email", "Text", "Meeting", "Note"];
 
 const ACTIVITY_ICONS: Record<string, string> = {
-  Call: "ð", Email: "âï¸", Text: "ð¬", Meeting: "ð¤", Note: "ð",
+  Call: "📞", Email: "✉️", Text: "💬", Meeting: "🤝", Note: "📝",
 };
 
 const ACTIVITY_COLORS: Record<string, string> = {
   Call: "#58a6ff", Email: "#a371f7", Text: "#3fb950", Meeting: "#d29922", Note: "#8b949e",
 };
 
-// ââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function daysUntil(dateStr?: string): number | null {
   if (!dateStr) return null;
   const diff = new Date(dateStr).getTime() - Date.now();
@@ -79,42 +94,38 @@ function urgencyColor(days: number | null): string {
 }
 
 function fmt(n?: number) {
-  if (!n) return "â";
+  if (!n) return "—";
   return "$" + n.toLocaleString();
 }
 
-function parseActivityLog(notes?: string, callSummary?: string, lastContact?: string): ActivityEntry[] {
-  const entries: ActivityEntry[] = [];
-
-  // Try to parse Notes as JSON activity log
+// Legacy Notes JSON → DbActivity-shaped objects for display
+function legacyActivities(notes?: string, callSummary?: string, lastContact?: string): DbActivity[] {
+  const entries: LegacyEntry[] = [];
   if (notes) {
     try {
       const parsed = JSON.parse(notes);
-      if (Array.isArray(parsed)) {
-        entries.push(...parsed);
-        // Also fold in call summary if it's newer (legacy compat)
-        if (callSummary && lastContact) {
-          const iso = lastContact + "T00:00:00.000Z";
-          const alreadyHave = entries.some(e => e.text === callSummary);
-          if (!alreadyHave) entries.push({ type: "Call", text: callSummary, ts: iso });
-        }
-        return entries.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-      }
-    } catch {}
-    // Legacy plain-text Notes: treat as a Note entry
-    const noteDate = (lastContact ?? new Date().toISOString().split("T")[0]) + "T00:00:00.000Z";
-    entries.push({ type: "Note", text: notes, ts: noteDate });
+      if (Array.isArray(parsed)) entries.push(...parsed);
+    } catch {
+      const noteDate = (lastContact ?? new Date().toISOString().split("T")[0]) + "T00:00:00.000Z";
+      entries.push({ type: "Note", text: notes, ts: noteDate });
+    }
   }
-
-  // Fold in call summary if exists
-  if (callSummary && lastContact) {
+  if (callSummary && lastContact && !entries.some(e => e.text === callSummary)) {
     entries.push({ type: "Call", text: callSummary, ts: lastContact + "T00:00:00.000Z" });
   }
-
-  return entries.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+  return entries
+    .sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+    .map((e, i) => ({
+      id: -(i + 1),
+      hot_lead_id: 0,
+      type: e.type,
+      summary: e.text,
+      created_by: "legacy",
+      created_at: e.ts,
+    }));
 }
 
-function generateEmailDraft(lead: Lead): string {
+function generateEmailDraft(lead: Lead): { subject: string; body: string } {
   const f = lead.fields;
   const name = f["Lead Name"] ?? "there";
   const firstName = name.split(" ")[0];
@@ -126,21 +137,20 @@ function generateEmailDraft(lead: Lead): string {
   const lender = f["Lender Name"] ?? null;
 
   const maturityLine = maturity
-    ? `I know your balloon note${lender ? ` with ${lender}` : ""} on ${address} is maturing in ${maturity}${amount ? ` â roughly ${amount}` : ""}.`
+    ? `I know your balloon note${lender ? ` with ${lender}` : ""} on ${address} is maturing in ${maturity}${amount ? ` – roughly ${amount}` : ""}.`
     : `I wanted to follow up regarding your property at ${address}.`;
 
-  return `Subject: Re: Refinancing ${address} â Next Steps
-
-Hi ${firstName},
+  const subject = `Re: Refinancing ${address} – Next Steps`;
+  const body = `Hi ${firstName},
 
 Great speaking with you earlier. ${maturityLine}
 
-My team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30â60 days, so you'd have a commitment well before the maturity date.
+My team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30–60 days, so you'd have a commitment well before the maturity date.
 
 Here's what the next step looks like:
-â¢ 15-minute call to review your property's financials
-â¢ We pull competing term sheets (no cost, no obligation)
-â¢ You pick the best rate and we handle the rest
+• 15-minute call to review your property's financials
+• We pull competing term sheets (no cost, no obligation)
+• You pick the best rate and we handle the rest
 
 Are you free for a quick call this week? I can work around your schedule.
 
@@ -149,9 +159,11 @@ David
 RefiLoop Commercial Mortgage
 NMLS #2510864
 david@refiloop.com`;
+
+  return { subject, body };
 }
 
-// ââ Sub-components âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Sub-components ───────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status?: string }) {
   const s = status ?? "New";
   const c = STATUS_COLORS[s] ?? STATUS_COLORS["New"];
@@ -168,7 +180,7 @@ function StatusBadge({ status }: { status?: string }) {
 function UrgencyPill({ days }: { days: number | null }) {
   if (days === null) return null;
   const color = urgencyColor(days);
-  const label = days <= 0 ? "MATURED" : days < 30 ? `${days}d ð¥` : `${days}d`;
+  const label = days <= 0 ? "MATURED" : days < 30 ? `${days}d 🔥` : `${days}d`;
   return (
     <span
       className="text-xs px-2 py-0.5 rounded font-mono font-bold"
@@ -190,7 +202,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-// ââ Main Component âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -198,17 +210,27 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [saving, setSaving] = useState(false);
   const [showNewLead, setShowNewLead] = useState(false);
-  const [emailBody, setEmailBody] = useState("");
+
+  // Email compose state
   const [showEmail, setShowEmail] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
 
   // Edit state
   const [editFields, setEditFields] = useState<Lead["fields"]>({});
 
-  // Activity log state
+  // Activity log state (from hot_lead_activities table)
   const [activityType, setActivityType] = useState("Call");
   const [activityText, setActivityText] = useState("");
-  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
+  const [activityLog, setActivityLog] = useState<DbActivity[]>([]);
+  const [activitiesLoading, setActivitiesLoading] = useState(false);
+
+  // Inbox sync state
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,18 +242,38 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
 
   useEffect(() => { load(); }, [load]);
 
+  async function fetchActivities(leadId: string, lead: Lead) {
+    setActivitiesLoading(true);
+    try {
+      const res = await fetch(`/api/hot-leads/${leadId}/activities`);
+      const data: DbActivity[] = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setActivityLog(data);
+      } else {
+        // Fall back to legacy Notes JSON for existing leads
+        setActivityLog(legacyActivities(
+          lead.fields.Notes,
+          lead.fields["Call Summary"],
+          lead.fields["Last Contact"],
+        ));
+      }
+    } finally {
+      setActivitiesLoading(false);
+    }
+  }
+
   function openLead(lead: Lead) {
     setSelected(lead);
     setEditFields({ ...lead.fields });
-    setEmailBody(generateEmailDraft(lead));
+    const draft = generateEmailDraft(lead);
+    setEmailTo((lead.fields.Email as string) ?? "");
+    setEmailSubject(draft.subject);
+    setEmailBody(draft.body);
     setShowEmail(false);
+    setEmailSent(false);
     setActivityText("");
     setActivityType("Call");
-    setActivityLog(parseActivityLog(
-      lead.fields.Notes,
-      lead.fields["Call Summary"],
-      lead.fields["Last Contact"],
-    ));
+    fetchActivities(lead.id, lead);
   }
 
   async function saveFields() {
@@ -252,39 +294,70 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   async function logActivity() {
     if (!selected || !activityText.trim()) return;
     setSaving(true);
-    const entry: ActivityEntry = {
-      type: activityType,
-      text: activityText.trim(),
-      ts: new Date().toISOString(),
-    };
-    const newLog = [entry, ...activityLog];
-    const now = new Date().toISOString().split("T")[0];
-    const updates: Lead["fields"] = {
-      Notes: JSON.stringify(newLog),
-      "Last Contact": now,
-      ...editFields,
-      // Mirror call summary for backward compat
-      ...(activityType === "Call" ? { "Call Summary": activityText.trim() } : {}),
-    };
-    await fetch(`/api/hot-leads/${selected.id}`, {
-      method: "PATCH",
+    const res = await fetch(`/api/hot-leads/${selected.id}/activities`, {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
+      body: JSON.stringify({
+        type: activityType,
+        summary: activityText.trim(),
+        created_by: user === "david" ? "David" : "Gorjan",
+      }),
     });
-    setLeads((prev) =>
-      prev.map((l) => (l.id === selected.id ? { ...l, fields: { ...l.fields, ...updates } } : l))
-    );
-    setSelected((prev) => prev ? { ...prev, fields: { ...prev.fields, ...updates } } : null);
-    setEditFields((prev) => ({ ...prev, ...updates }));
-    setActivityLog(newLog);
+    if (res.ok) {
+      const newEntry: DbActivity = await res.json();
+      setActivityLog((prev) => [newEntry, ...prev]);
+      if (activityType === "Call") {
+        const updates = { "Call Summary": activityText.trim(), "Last Contact": new Date().toISOString().split("T")[0] };
+        await fetch(`/api/hot-leads/${selected.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+        setEditFields((p) => ({ ...p, ...updates }));
+      }
+    }
     setActivityText("");
     setSaving(false);
   }
 
-  function copyEmail() {
-    navigator.clipboard.writeText(emailBody);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  async function sendEmailToLead() {
+    if (!selected || !emailTo || !emailSubject || !emailBody) return;
+    setSendingEmail(true);
+    try {
+      const res = await fetch(`/api/hot-leads/${selected.id}/send-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: emailTo, subject: emailSubject, body: emailBody }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.activity) setActivityLog((prev) => [data.activity as DbActivity, ...prev]);
+        setEmailSent(true);
+        setTimeout(() => setEmailSent(false), 3000);
+        if (!editFields.Email && emailTo) {
+          setEditFields((p) => ({ ...p, Email: emailTo }));
+          setLeads((prev) =>
+            prev.map((l) => l.id === selected.id ? { ...l, fields: { ...l.fields, Email: emailTo } } : l)
+          );
+        }
+      }
+    } finally {
+      setSendingEmail(false);
+    }
+  }
+
+  async function syncInbox() {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/gmail/sync");
+      const data = await res.json();
+      setLastSynced(new Date());
+      if (data.synced > 0 && selected) {
+        await fetchActivities(selected.id, selected);
+      }
+    } finally {
+      setSyncing(false);
+    }
   }
 
   const filtered = statusFilter === "all"
@@ -297,7 +370,6 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     return acc;
   }, {});
 
-  // Get all loans for the selected person (same Lead Name)
   const relatedLoans = selected
     ? leads.filter(
         (l) =>
@@ -307,14 +379,13 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
       )
     : [];
 
-  // Determine which contact to show based on "Connected Via"
   const connectedVia = (editFields["Connected Via"] as string) ?? "";
   const connectedContact =
     connectedVia === "Phone" ? editFields.Phone :
     connectedVia === "Email" ? editFields.Email :
     null;
 
-  // ââ New Lead Form state ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── New Lead Form state ────────────────────────────────────────────────────
   const [newLead, setNewLead] = useState({
     "Lead Name": "", "Property Address": "", "Loan Amount": "",
     "Balloon Maturity": "", "Lender Name": "", "Property Type": "",
@@ -347,11 +418,11 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     setSaving(false);
   }
 
-  // ââ Render âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full" style={{ color: "#e6edf3" }}>
 
-      {/* ââ Left: Lead List ââ */}
+      {/* Left: Lead List */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b" style={{ borderColor: "#30363d" }}>
@@ -359,21 +430,39 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
             <div>
               <h1 className="text-xl font-semibold" style={{ color: "#e6edf3" }}>Hot Leads</h1>
               <p className="text-sm mt-0.5" style={{ color: "#8b949e" }}>
-                {leads.length} leads Â· {leads.filter(l => {
+                {leads.length} leads &middot; {leads.filter(l => {
                   const d = daysUntil(l.fields["Balloon Maturity"]);
                   return d !== null && d < 90;
                 }).length} maturing within 90 days
+                {lastSynced && (
+                  <span style={{ color: "#484f58" }}> &middot; synced {lastSynced.toLocaleTimeString()}</span>
+                )}
               </p>
             </div>
-            <button
-              onClick={() => setShowNewLead(true)}
-              className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
-              style={{ background: "#238636", color: "#fff", border: "1px solid #2ea043" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#2ea043")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "#238636")}
-            >
-              + Add Lead
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={syncInbox}
+                disabled={syncing}
+                title="Sync david@refiloop.com inbox for replies"
+                className="px-3 py-1.5 rounded-md text-sm transition-colors"
+                style={{
+                  background: syncing ? "#21262d" : "#161b22",
+                  color: syncing ? "#484f58" : "#8b949e",
+                  border: "1px solid #30363d",
+                }}
+              >
+                {syncing ? "Syncing…" : "↻ Inbox"}
+              </button>
+              <button
+                onClick={() => setShowNewLead(true)}
+                className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
+                style={{ background: "#238636", color: "#fff", border: "1px solid #2ea043" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "#2ea043")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "#238636")}
+              >
+                + Add Lead
+              </button>
+            </div>
           </div>
 
           {/* Status filter tabs */}
@@ -402,10 +491,10 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
         {/* Lead cards */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {loading ? (
-            <div className="flex items-center justify-center h-40" style={{ color: "#8b949e" }}>Loadingâ¦</div>
+            <div className="flex items-center justify-center h-40" style={{ color: "#8b949e" }}>Loading…</div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 gap-2" style={{ color: "#8b949e" }}>
-              <span className="text-2xl">ð­</span>
+              <span className="text-2xl">🔭</span>
               <span className="text-sm">No leads in this status</span>
             </div>
           ) : (
@@ -413,10 +502,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
               const f = lead.fields;
               const days = daysUntil(f["Balloon Maturity"]);
               const isActive = selected?.id === lead.id;
-              // Count other loans for this person
-              const loanCount = leads.filter(
-                l => l.fields["Lead Name"] === f["Lead Name"]
-              ).length;
+              const loanCount = leads.filter(l => l.fields["Lead Name"] === f["Lead Name"]).length;
               return (
                 <div
                   key={lead.id}
@@ -444,20 +530,20 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                         )}
                       </div>
                       <div className="text-xs mb-1.5" style={{ color: "#8b949e" }}>
-                        ð {f["Property Address"] ?? "â"}
+                        📍 {f["Property Address"] ?? "—"}
                         {f["Property Type"] && <span className="ml-2 px-1.5 py-0.5 rounded text-xs" style={{ background: "#21262d", color: "#8b949e" }}>{f["Property Type"]}</span>}
                       </div>
                       {f["Call Summary"] && (
                         <div className="text-xs line-clamp-2 mb-1.5" style={{ color: "#8b949e" }}>
-                          ð {f["Call Summary"]}
+                          📞 {f["Call Summary"]}
                         </div>
                       )}
                       <div className="flex items-center gap-3 text-xs" style={{ color: "#484f58" }}>
-                        {f["Loan Amount"] && <span>ð° {fmt(f["Loan Amount"])}</span>}
-                        {f["Lender Name"] && <span>ð¦ {f["Lender Name"]}</span>}
+                        {f["Loan Amount"] && <span>💰 {fmt(f["Loan Amount"])}</span>}
+                        {f["Lender Name"] && <span>🏦 {f["Lender Name"]}</span>}
                         {f["Next Action"] && (
                           <span className="px-1.5 py-0.5 rounded" style={{ background: "#161b22", color: "#58a6ff" }}>
-                            â {f["Next Action"]}
+                            → {f["Next Action"]}
                           </span>
                         )}
                       </div>
@@ -470,7 +556,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
         </div>
       </div>
 
-      {/* ââ Right: Detail Panel (no tabs) ââ */}
+      {/* Right: Detail Panel */}
       {selected && (
         <div
           className="flex flex-col border-l overflow-hidden"
@@ -493,7 +579,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
               onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
             >
-              Ã
+              &times;
             </button>
           </div>
 
@@ -501,7 +587,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
           <div className="flex-1 overflow-y-auto">
             <div className="p-5 space-y-5">
 
-              {/* ââ Quick Stats ââ */}
+              {/* Quick Stats */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                   <div className="text-xs mb-1" style={{ color: "#484f58" }}>LOAN AMOUNT</div>
@@ -512,28 +598,28 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                   <div className="text-sm font-medium" style={{ color: urgencyColor(daysUntil(editFields["Balloon Maturity"] as string | undefined)) }}>
                     {editFields["Balloon Maturity"]
                       ? new Date(editFields["Balloon Maturity"] as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                      : "â"}
+                      : "—"}
                   </div>
                 </div>
                 <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                   <div className="text-xs mb-1" style={{ color: "#484f58" }}>LENDER</div>
-                  <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{(editFields["Lender Name"] as string) || "â"}</div>
+                  <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{(editFields["Lender Name"] as string) || "—"}</div>
                 </div>
                 <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                   <div className="text-xs mb-1" style={{ color: "#484f58" }}>
                     {connectedVia ? `CONNECTED VIA ${connectedVia.toUpperCase()}` : "CONTACT"}
                   </div>
                   <div className="text-sm font-medium" style={{ color: connectedVia ? "#3fb950" : "#484f58" }}>
-                    {connectedContact || (connectedVia ? "â" : "Not set")}
+                    {connectedContact || (connectedVia ? "—" : "Not set")}
                   </div>
                 </div>
               </div>
 
-              {/* ââ Other Loans ââ */}
+              {/* Other Loans */}
               {relatedLoans.length > 0 && (
                 <div>
                   <div className="text-xs font-medium mb-2" style={{ color: "#484f58" }}>
-                    OTHER LOANS â {selected.fields["Lead Name"]}
+                    OTHER LOANS — {selected.fields["Lead Name"]}
                   </div>
                   <div className="space-y-2">
                     {relatedLoans.map((loan) => {
@@ -550,7 +636,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="text-xs truncate" style={{ color: "#8b949e" }}>
-                                ð {loan.fields["Property Address"] ?? "â"}
+                                📍 {loan.fields["Property Address"] ?? "—"}
                               </div>
                               <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: "#484f58" }}>
                                 {loan.fields["Loan Amount"] && <span>{fmt(loan.fields["Loan Amount"])}</span>}
@@ -569,7 +655,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 </div>
               )}
 
-              {/* ââ Recommended Steps ââ */}
+              {/* Recommended Steps */}
               {editFields["Recommended Steps"] && (
                 <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                   <div className="text-xs mb-2" style={{ color: "#484f58" }}>RECOMMENDED STEPS</div>
@@ -579,7 +665,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 </div>
               )}
 
-              {/* ââ Editable Fields ââ */}
+              {/* Editable Fields */}
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Status">
@@ -599,7 +685,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                       style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
                       className="w-full rounded px-2 py-1.5 text-sm"
                     >
-                      <option value="">â</option>
+                      <option value="">—</option>
                       {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
                     </select>
                   </Field>
@@ -628,7 +714,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                           border: `1px solid ${connectedVia === opt ? "#1f6feb" : "#30363d"}`,
                         }}
                       >
-                        {opt === "" ? "None" : opt === "Phone" ? "ð Phone" : "âï¸ Email"}
+                        {opt === "" ? "None" : opt === "Phone" ? "📞 Phone" : "✉️ Email"}
                       </button>
                     ))}
                   </div>
@@ -652,7 +738,10 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     <input
                       type="email"
                       value={(editFields.Email as string) ?? ""}
-                      onChange={(e) => setEditFields((p) => ({ ...p, Email: e.target.value }))}
+                      onChange={(e) => {
+                        setEditFields((p) => ({ ...p, Email: e.target.value }));
+                        setEmailTo(e.target.value);
+                      }}
                       style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
                       className="w-full rounded px-2 py-1.5 text-sm"
                       placeholder="borrower@email.com"
@@ -668,7 +757,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                       style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
                       className="w-full rounded px-2 py-1.5 text-sm"
                     >
-                      <option value="">â</option>
+                      <option value="">—</option>
                       {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
                     </select>
                   </Field>
@@ -696,98 +785,148 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     border: "1px solid #30363d",
                   }}
                 >
-                  {saving ? "Savingâ¦" : "Save Changes"}
+                  {saving ? "Saving…" : "Save Changes"}
                 </button>
                 <button
                   onClick={() => setShowEmail(!showEmail)}
                   className="px-3 py-2 rounded-md text-sm transition-colors"
-                  style={{ background: "#161b22", color: "#8b949e", border: "1px solid #30363d" }}
+                  style={{
+                    background: showEmail ? "#21262d" : "#161b22",
+                    color: "#a371f7",
+                    border: `1px solid ${showEmail ? "#6e40c9" : "#30363d"}`,
+                  }}
                 >
-                  âï¸ Draft Email
+                  ✉️ Email
                 </button>
               </div>
 
-              {/* ââ Email Draft (collapsible) ââ */}
+              {/* Email Compose (collapsible) */}
               {showEmail && (
-                <div className="space-y-3 rounded-lg p-4" style={{ background: "#161b22", border: "1px solid #30363d" }}>
+                <div className="space-y-3 rounded-lg p-4" style={{ background: "#161b22", border: "1px solid #6e40c940" }}>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium" style={{ color: "#484f58" }}>FOLLOW-UP EMAIL DRAFT</span>
+                    <span className="text-xs font-medium" style={{ color: "#a371f7" }}>COMPOSE EMAIL</span>
                     <button
-                      onClick={() => setEmailBody(generateEmailDraft(selected))}
+                      onClick={() => {
+                        const draft = generateEmailDraft(selected);
+                        setEmailSubject(draft.subject);
+                        setEmailBody(draft.body);
+                      }}
                       className="text-xs px-2 py-1 rounded"
                       style={{ color: "#8b949e", border: "1px solid #30363d", background: "#0d1117" }}
                     >
-                      âº Regenerate
+                      ↺ Reset draft
                     </button>
                   </div>
+
+                  <Field label="To">
+                    <input
+                      type="email"
+                      value={emailTo}
+                      onChange={(e) => setEmailTo(e.target.value)}
+                      style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                      placeholder="borrower@email.com"
+                    />
+                  </Field>
+
+                  <Field label="Subject">
+                    <input
+                      type="text"
+                      value={emailSubject}
+                      onChange={(e) => setEmailSubject(e.target.value)}
+                      style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                    />
+                  </Field>
+
                   <textarea
-                    rows={12}
+                    rows={10}
                     value={emailBody}
                     onChange={(e) => setEmailBody(e.target.value)}
                     className="w-full rounded-md p-3 text-xs font-mono"
                     style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical", lineHeight: 1.6 }}
                   />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={copyEmail}
-                      className="flex-1 py-2 rounded-md text-sm font-medium"
-                      style={{ background: copied ? "#238636" : "#1f6feb", color: "#fff", border: "1px solid #30363d" }}
-                    >
-                      {copied ? "â Copied!" : "Copy to Clipboard"}
-                    </button>
-                    {editFields.Email && (
-                      <a
-                        href={`mailto:${editFields.Email}?subject=Refinancing%20${encodeURIComponent(editFields["Property Address"] as string ?? "")}&body=${encodeURIComponent(emailBody)}`}
-                        className="flex-1 py-2 rounded-md text-sm font-medium text-center"
-                        style={{ background: "#161b22", color: "#8b949e", border: "1px solid #30363d" }}
-                      >
-                        Open in Mail App
-                      </a>
-                    )}
-                  </div>
+
+                  <button
+                    onClick={sendEmailToLead}
+                    disabled={sendingEmail || !emailTo || !emailSubject || !emailBody || emailSent}
+                    className="w-full py-2 rounded-md text-sm font-medium transition-colors"
+                    style={{
+                      background: emailSent ? "#238636" : sendingEmail || !emailTo ? "#21262d" : "#6e40c9",
+                      color: sendingEmail || !emailTo ? "#484f58" : "#fff",
+                      border: "1px solid #30363d",
+                    }}
+                  >
+                    {emailSent ? "✓ Sent!" : sendingEmail ? "Sending…" : "Send from david@refiloop.com"}
+                  </button>
                 </div>
               )}
 
-              {/* ââ Activity Log ââ */}
+              {/* Activity Log */}
               <div style={{ borderTop: "1px solid #21262d", paddingTop: 20 }}>
-                <div className="text-xs font-medium mb-3" style={{ color: "#484f58" }}>ACTIVITY</div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs font-medium" style={{ color: "#484f58" }}>ACTIVITY</div>
+                  <button
+                    onClick={syncInbox}
+                    disabled={syncing}
+                    className="text-xs px-2 py-1 rounded transition-colors"
+                    style={{ color: syncing ? "#484f58" : "#8b949e", border: "1px solid #30363d", background: "#161b22" }}
+                  >
+                    {syncing ? "Syncing…" : "↻ Sync inbox"}
+                  </button>
+                </div>
 
-                {/* Activity History â shown first */}
-                {activityLog.length === 0 ? (
+                {activitiesLoading ? (
+                  <div className="text-xs text-center py-4 mb-4" style={{ color: "#484f58" }}>Loading…</div>
+                ) : activityLog.length === 0 ? (
                   <div className="text-xs text-center py-4 mb-4 rounded-md" style={{ color: "#484f58", background: "#161b22", border: "1px solid #21262d" }}>
-                    No activity yet â log the first interaction below.
+                    No activity yet — log the first interaction below.
                   </div>
                 ) : (
                   <div className="mb-4" style={{ position: "relative" }}>
-                    {/* Timeline line */}
                     <div style={{ position: "absolute", left: 15, top: 0, bottom: 0, width: 1, background: "#21262d" }} />
                     <div className="space-y-3">
-                      {activityLog.map((entry, i) => {
-                        const date = new Date(entry.ts);
+                      {activityLog.map((entry) => {
+                        const date = new Date(entry.created_at);
                         const dateStr = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
                         const timeStr = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
                         const color = ACTIVITY_COLORS[entry.type] ?? "#8b949e";
+                        const isGmail = !!entry.gmail_message_id;
+                        const isIncoming = entry.direction === "incoming";
                         return (
-                          <div key={i} className="flex gap-3" style={{ position: "relative" }}>
-                            {/* Icon dot on timeline */}
+                          <div key={entry.id} className="flex gap-3" style={{ position: "relative" }}>
                             <div
                               className="shrink-0 flex items-center justify-center rounded-full text-xs"
                               style={{ width: 30, height: 30, background: color + "20", border: `1px solid ${color}60`, color, zIndex: 1 }}
                             >
                               {ACTIVITY_ICONS[entry.type]}
                             </div>
-                            {/* Content */}
                             <div className="flex-1 min-w-0 rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                               <div className="flex items-center gap-2 mb-1 flex-wrap">
                                 <span className="text-xs font-semibold" style={{ color }}>
                                   {entry.type}
                                 </span>
+                                {isGmail && (
+                                  <span
+                                    className="text-xs px-1.5 py-0.5 rounded"
+                                    style={{
+                                      background: isIncoming ? "#3fb95020" : "#a371f720",
+                                      color: isIncoming ? "#3fb950" : "#a371f7",
+                                      border: `1px solid ${isIncoming ? "#3fb95040" : "#a371f740"}`,
+                                    }}
+                                  >
+                                    {isIncoming ? "↩ Reply" : "↗ Sent"}
+                                  </span>
+                                )}
                                 <span className="text-xs" style={{ color: "#484f58" }}>
-                                  {dateStr} Â· {timeStr}
+                                  {dateStr} &middot; {timeStr}
                                 </span>
+                                {entry.created_by && entry.created_by !== "legacy" && (
+                                  <span className="text-xs" style={{ color: "#484f58" }}>&middot; {entry.created_by}</span>
+                                )}
                               </div>
-                              <div className="text-xs" style={{ color: "#8b949e", lineHeight: 1.6 }}>
-                                {entry.text}
+                              <div className="text-xs whitespace-pre-wrap" style={{ color: "#8b949e", lineHeight: 1.6 }}>
+                                {entry.summary}
                               </div>
                             </div>
                           </div>
@@ -800,7 +939,6 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 {/* Log new entry */}
                 <div className="rounded-md p-3 space-y-2" style={{ background: "#161b22", border: "1px solid #30363d" }}>
                   <div className="text-xs font-medium mb-2" style={{ color: "#484f58" }}>LOG NEW INTERACTION</div>
-                  {/* Type selector */}
                   <div className="flex gap-1">
                     {ACTIVITY_TYPES.map((t) => (
                       <button
@@ -829,7 +967,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                       activityType === "Email" ? "What did you send or receive?" :
                       activityType === "Text" ? "What was the text exchange?" :
                       activityType === "Meeting" ? "What was discussed?" :
-                      "Add a noteâ¦"
+                      "Add a note…"
                     }
                   />
                   <button
@@ -842,7 +980,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                       border: `1px solid ${saving || !activityText.trim() ? "#30363d" : ACTIVITY_COLORS[activityType] + "60"}`,
                     }}
                   >
-                    {saving ? "Savingâ¦" : `${ACTIVITY_ICONS[activityType]} Log ${activityType}`}
+                    {saving ? "Saving…" : `${ACTIVITY_ICONS[activityType]} Log ${activityType}`}
                   </button>
                 </div>
               </div>
@@ -852,7 +990,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
         </div>
       )}
 
-      {/* ââ New Lead Modal ââ */}
+      {/* New Lead Modal */}
       {showNewLead && (
         <div
           className="fixed inset-0 flex items-center justify-center z-50"
@@ -865,7 +1003,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
           >
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#30363d" }}>
               <span className="font-semibold text-sm" style={{ color: "#e6edf3" }}>Add Hot Lead</span>
-              <button onClick={() => setShowNewLead(false)} style={{ color: "#484f58" }}>Ã</button>
+              <button onClick={() => setShowNewLead(false)} style={{ color: "#484f58" }}>&times;</button>
             </div>
             <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
               {[
@@ -894,7 +1032,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                   style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
                   className="w-full rounded px-2 py-1.5 text-sm"
                 >
-                  <option value="">â</option>
+                  <option value="">—</option>
                   {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
                 </select>
               </Field>
@@ -939,7 +1077,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                   border: "1px solid #30363d",
                 }}
               >
-                {saving ? "Savingâ¦" : "Add Lead"}
+                {saving ? "Saving…" : "Add Lead"}
               </button>
             </div>
           </div>

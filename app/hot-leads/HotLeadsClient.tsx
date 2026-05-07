@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +46,32 @@ interface Lead {
     "Connected Via"?: string;
   };
 }
+
+interface EnrichPhone {
+  phone: string; source: string; verified: boolean;
+  quality_score: number | null; phone_type: string | null;
+  is_primary: boolean; priority: number | null;
+}
+interface EnrichEmail {
+  email: string; source: string; is_valid: boolean;
+  is_primary: boolean; priority: number | null; email_type: string | null;
+}
+interface EnrichLoan {
+  id: number; property_type: string | null; property_subtype: string | null;
+  interest_rate: number | null; interest_rate_type: string | null; ltv: number | null;
+  lender_name: string | null; lender_type: string | null; mortgage_amount: number | null;
+  display_loan_amount: string | null; term: string | null; due_date: string | null;
+  estimated_due_date: string | null; address: string | null; city: string | null;
+  state: string | null; year_built: number | null; unit_count: number | null;
+  building_sqft: number | null;
+}
+interface EnrichData {
+  owner_id: number;
+  owner: { name: string | null; first_name: string | null; last_name: string | null;
+    skip_trace_match: boolean | null; outreach_status: string | null; } | null;
+  phones: EnrichPhone[]; emails: EnrichEmail[]; loans: EnrichLoan[];
+}
+
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const STATUSES = ["New", "Follow-Up", "Proposal Sent", "Engaged", "Closed Won", "Dead"];
@@ -203,6 +229,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+function SourceBadge({ source, verified }: { source: string; verified?: boolean }) {
+  if (source === "mojo") return <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: "#238636", color: "#3fb950", border: "1px solid #2ea04340" }}>✓ Called</span>;
+  if (source === "idi") return <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: "#9e6a0320", color: "#d29922", border: "1px solid #9e6a0340" }}>IDI Trace</span>;
+  if (verified) return <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: "#1f6feb20", color: "#58a6ff", border: "1px solid #1f6feb40" }}>✓ Verified</span>;
+  return <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#21262d", color: "#484f58" }}>{source}</span>;
+}
+
 export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -227,6 +260,8 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [activityText, setActivityText] = useState("");
   const [activityLog, setActivityLog] = useState<DbActivity[]>([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
+  const [enrichData, setEnrichData] = useState<EnrichData | null>(null);
+  const [enrichLoading, setEnrichLoading] = useState(false);
 
   // Inbox sync state
   const [syncing, setSyncing] = useState(false);
@@ -273,6 +308,13 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     setEmailSent(false);
     setActivityText("");
     setActivityType("Call");
+    setEnrichData(null);
+    const _ph = lead.fields.Phone;
+    if (_ph) {
+      setEnrichLoading(true);
+      const _url = "/api/hot-leads/enrich" + "?phone=" + encodeURIComponent(_ph);
+      fetch(_url).then(r=>r.json()).then(d=>{setEnrichData(d??null);setEnrichLoading(false);}).catch(()=>setEnrichLoading(false));
+    }
     fetchActivities(lead.id, lead);
   }
 
@@ -665,6 +707,52 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 </div>
               )}
 
+              {enrichLoading && <div className="text-xs mb-3" style={{color:"#8b949e"}}>Loading database record…</div>}
+              {enrichData && !enrichLoading && (() => {
+                const loan = enrichData.loans[0] ?? null;
+                return (
+                  <div className="mb-4 rounded-lg p-3" style={{background:"#161b22",border:"1px solid #30363d"}}>
+                    <div className="text-xs font-semibold mb-3" style={{color:"#8b949e",letterSpacing:"0.08em"}}>
+                      DATABASE RECORD{enrichData.loans.length > 1 ? ` (${enrichData.loans.length} loans)` : ""}
+                    </div>
+                    {loan && (
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-3 text-xs">
+                        {loan.property_type&&<div><span style={{color:"#484f58"}}>TYPE </span><span style={{color:"#e6edf3"}}>{loan.property_type}</span></div>}
+                        {loan.interest_rate!=null&&<div><span style={{color:"#484f58"}}>RATE </span><span style={{color:"#e6edf3"}}>{loan.interest_rate}%</span></div>}
+                        {loan.ltv!=null&&<div><span style={{color:"#484f58"}}>LTV </span><span style={{color:"#e6edf3"}}>{loan.ltv}%</span></div>}
+                        {loan.interest_rate_type&&<div><span style={{color:"#484f58"}}>RATE TYPE </span><span style={{color:"#e6edf3"}}>{loan.interest_rate_type}</span></div>}
+                        {loan.lender_type&&<div><span style={{color:"#484f58"}}>LENDER TYPE </span><span style={{color:"#e6edf3"}}>{loan.lender_type}</span></div>}
+                        {loan.term&&<div><span style={{color:"#484f58"}}>TERM </span><span style={{color:"#e6edf3"}}>{loan.term}</span></div>}
+                        {loan.unit_count!=null&&<div><span style={{color:"#484f58"}}>UNITS </span><span style={{color:"#e6edf3"}}>{loan.unit_count}</span></div>}
+                        {loan.year_built!=null&&<div><span style={{color:"#484f58"}}>BUILT </span><span style={{color:"#e6edf3"}}>{loan.year_built}</span></div>}
+                      </div>
+                    )}
+                    {enrichData.phones.length>0&&(
+                      <div className="mb-2">
+                        <div className="text-xs mb-1" style={{color:"#484f58"}}>ALL PHONES ON FILE</div>
+                        {enrichData.phones.map((p,i)=>(
+                          <div key={i} className="flex items-center gap-2 mb-0.5">
+                            <span className="text-xs font-mono" style={{color:"#e6edf3"}}>{p.phone}</span>
+                            <SourceBadge source={p.source} verified={p.verified}/>
+                            {p.phone_type&&<span className="text-xs" style={{color:"#8b949e"}}>{p.phone_type}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {enrichData.emails.length>0&&(
+                      <div>
+                        <div className="text-xs mb-1" style={{color:"#484f58"}}>ALL EMAILS ON FILE</div>
+                        {enrichData.emails.map((e,i)=>(
+                          <div key={i} className="flex items-center gap-2 mb-0.5">
+                            <span className="text-xs" style={{color:"#e6edf3"}}>{e.email}</span>
+                            <SourceBadge source={e.source} verified={e.is_valid}/>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {/* Editable Fields */}
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">

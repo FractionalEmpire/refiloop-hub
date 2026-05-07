@@ -357,6 +357,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     const recording = call.mojo_call_id ? recordingByCallId.get(call.mojo_call_id) : null;
     return {
       ...call,
+      recording_url: call.recording_url ?? recording?.recording_url ?? null,
       recording_contact_name: recording?.contact_name ?? null,
       recording_source_url: recording?.source_url ?? null,
     };

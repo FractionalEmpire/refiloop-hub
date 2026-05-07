@@ -1,5 +1,12 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+
+// ââ Types ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+interface ActivityEntry {
+  type: string; // "Call" | "Email" | "Text" | "Meeting" | "Note"
+  text: string;
+  ts: string;   // ISO timestamp
+}
 
 interface Lead {
   id: string;
@@ -20,133 +27,188 @@ interface Lead {
     "Borrower Entity"?: string;
     Email?: string;
     Phone?: string;
-    Notes?: string;
-    lead_score?: number;
-    mojo_status?: string;
+    Notes?: string;          // stores JSON ActivityEntry[] for activity log
+    "Connected Via"?: string; // "Phone" | "Email" | ""
   };
 }
 
-interface Activity {
-  id: number;
-  hot_lead_id: number;
-  type: string;
-  summary: string;
-  created_at: string;
-  created_by: string;
-}
-
-interface SearchResult {
-  owner_id: number;
-  name: string;
-  phones: string[];
-  loan: {
-    loan_id: number;
-    capitalize_loan_id: number;
-    property_address: string;
-    property_city: string;
-    property_state: string;
-    property_zip: string;
-    property_type: string;
-    loan_amount: string;
-    loan_amount_num: number | null;
-    lender_name: string;
-    due_date: string;
-    interest_rate: string;
-    lead_score: number;
-  } | null;
-}
-
+// ââ Constants ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const STATUSES = ["New", "Follow-Up", "Proposal Sent", "Engaged", "Closed Won", "Dead"];
-const STATUS_COLORS: Record<string, { text: string; border: string }> = {
-  New: { text: "#58a6ff", border: "#1f6feb" },
-  "Follow-Up": { text: "#d29922", border: "#9e6a03" },
-  "Proposal Sent": { text: "#a371f7", border: "#6e40c9" },
-  Engaged: { text: "#3fb950", border: "#238636" },
-  "Closed Won": { text: "#3fb950", border: "#238636" },
-  Dead: { text: "#484f58", border: "#30363d" },
-};
-const NEXT_ACTIONS = ["Callback","Send Email","Send Proposal","Verify Loan Data","Schedule Follow-Up","Add to Pipeline","No Action"];
-const PROPERTY_TYPES = ["Multifamily","Mixed Use","Retail","Office","Industrial","Self Storage","Hotel/Motel","Mobile Home Park","Land","Other"];
-const ACTIVITY_TYPES = ["Call", "Email", "Text", "Meeting", "Note"];
-const ACTIVITY_ICONS: Record<string, string> = {
-  Call: "📞",
-  Email: "✉️",
-  Text: "💬",
-  Meeting: "🤝",
-  Note: "📝",
+
+const STATUS_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  New:             { bg: "#0d1117", text: "#58a6ff", border: "#1f6feb" },
+  "Follow-Up":     { bg: "#0d1117", text: "#d29922", border: "#9e6a03" },
+  "Proposal Sent": { bg: "#0d1117", text: "#a371f7", border: "#6e40c9" },
+  Engaged:         { bg: "#0d1117", text: "#3fb950", border: "#238636" },
+  "Closed Won":    { bg: "#0d1117", text: "#3fb950", border: "#238636" },
+  Dead:            { bg: "#0d1117", text: "#484f58", border: "#30363d" },
 };
 
+const NEXT_ACTIONS = [
+  "Callback", "Send Email", "Send Proposal", "Verify Loan Data",
+  "Schedule Follow-Up", "Add to Pipeline", "No Action",
+];
+
+const PROPERTY_TYPES = [
+  "Multifamily", "Mixed Use", "Retail", "Office", "Industrial",
+  "Self Storage", "Hotel/Motel", "Land", "Other",
+];
+
+const ACTIVITY_TYPES = ["Call", "Email", "Text", "Meeting", "Note"];
+
+const ACTIVITY_ICONS: Record<string, string> = {
+  Call: "ð", Email: "âï¸", Text: "ð¬", Meeting: "ð¤", Note: "ð",
+};
+
+const ACTIVITY_COLORS: Record<string, string> = {
+  Call: "#58a6ff", Email: "#a371f7", Text: "#3fb950", Meeting: "#d29922", Note: "#8b949e",
+};
+
+// ââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 function daysUntil(dateStr?: string): number | null {
   if (!dateStr) return null;
-  return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86400000);
+  const diff = new Date(dateStr).getTime() - Date.now();
+  return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
-function urgencyColor(days: number | null) {
+
+function urgencyColor(days: number | null): string {
   if (days === null) return "#484f58";
-  if (days < 60) return "#f85149";
+  if (days < 60)  return "#f85149";
   if (days < 120) return "#d29922";
   return "#3fb950";
 }
-function fmt(n?: number | null) { return n ? "$" + n.toLocaleString() : "—"; }
-function fmtPhone(p: string) {
-  const d = p.replace(/\D/g, "");
-  return d.length === 10 ? `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}` : p;
+
+function fmt(n?: number) {
+  if (!n) return "â";
+  return "$" + n.toLocaleString();
 }
-function fmtDateTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) +
-    " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+function parseActivityLog(notes?: string, callSummary?: string, lastContact?: string): ActivityEntry[] {
+  const entries: ActivityEntry[] = [];
+
+  // Try to parse Notes as JSON activity log
+  if (notes) {
+    try {
+      const parsed = JSON.parse(notes);
+      if (Array.isArray(parsed)) {
+        entries.push(...parsed);
+        // Also fold in call summary if it's newer (legacy compat)
+        if (callSummary && lastContact) {
+          const iso = lastContact + "T00:00:00.000Z";
+          const alreadyHave = entries.some(e => e.text === callSummary);
+          if (!alreadyHave) entries.push({ type: "Call", text: callSummary, ts: iso });
+        }
+        return entries.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+      }
+    } catch {}
+    // Legacy plain-text Notes: treat as a Note entry
+    const noteDate = (lastContact ?? new Date().toISOString().split("T")[0]) + "T00:00:00.000Z";
+    entries.push({ type: "Note", text: notes, ts: noteDate });
+  }
+
+  // Fold in call summary if exists
+  if (callSummary && lastContact) {
+    entries.push({ type: "Call", text: callSummary, ts: lastContact + "T00:00:00.000Z" });
+  }
+
+  return entries.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 }
-function generateEmailDraft(lead: Lead) {
+
+function generateEmailDraft(lead: Lead): string {
   const f = lead.fields;
-  const firstName = (f["Lead Name"] ?? "there").split(" ")[0];
+  const name = f["Lead Name"] ?? "there";
+  const firstName = name.split(" ")[0];
   const address = f["Property Address"] ?? "your property";
   const amount = f["Loan Amount"] ? `$${f["Loan Amount"].toLocaleString()}` : null;
-  const maturity = f["Balloon Maturity"] ? new Date(f["Balloon Maturity"]).toLocaleDateString("en-US",{month:"long",year:"numeric"}) : null;
+  const maturity = f["Balloon Maturity"]
+    ? new Date(f["Balloon Maturity"]).toLocaleDateString("en-US", { month: "long", year: "numeric" })
+    : null;
   const lender = f["Lender Name"] ?? null;
+
   const maturityLine = maturity
-    ? `I know your balloon note${lender ? ` with ${lender}` : ""} on ${address} is maturing in ${maturity}${amount ? ` — roughly ${amount}` : ""}.`
+    ? `I know your balloon note${lender ? ` with ${lender}` : ""} on ${address} is maturing in ${maturity}${amount ? ` â roughly ${amount}` : ""}.`
     : `I wanted to follow up regarding your property at ${address}.`;
-  return `Subject: Re: Refinancing ${address} — Next Steps\n\nHi ${firstName},\n\nGreat speaking with you earlier. ${maturityLine}\n\nMy team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30–60 days, so you'd have a commitment well before the maturity date.\n\nHere's what the next step looks like:\n• 15-minute call to review your property's financials\n• We pull competing term sheets (no cost, no obligation)\n• You pick the best rate and we handle the rest\n\nAre you free for a quick call this week? I can work around your schedule.\n\nBest,\nDavid\nRefiLoop Commercial Mortgage\nNMLS #2510864\ndavid@refiloop.com`;
+
+  return `Subject: Re: Refinancing ${address} â Next Steps
+
+Hi ${firstName},
+
+Great speaking with you earlier. ${maturityLine}
+
+My team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30â60 days, so you'd have a commitment well before the maturity date.
+
+Here's what the next step looks like:
+â¢ 15-minute call to review your property's financials
+â¢ We pull competing term sheets (no cost, no obligation)
+â¢ You pick the best rate and we handle the rest
+
+Are you free for a quick call this week? I can work around your schedule.
+
+Best,
+David
+RefiLoop Commercial Mortgage
+NMLS #2510864
+david@refiloop.com`;
 }
+
+// ââ Sub-components âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 function StatusBadge({ status }: { status?: string }) {
-  const s = status ?? "New"; const c = STATUS_COLORS[s] ?? STATUS_COLORS["New"];
-  return <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ color: c.text, border: `1px solid ${c.border}`, background: "transparent" }}>{s}</span>;
+  const s = status ?? "New";
+  const c = STATUS_COLORS[s] ?? STATUS_COLORS["New"];
+  return (
+    <span
+      className="text-xs px-2 py-0.5 rounded-full font-medium"
+      style={{ color: c.text, border: `1px solid ${c.border}`, background: "transparent" }}
+    >
+      {s}
+    </span>
+  );
 }
+
 function UrgencyPill({ days }: { days: number | null }) {
   if (days === null) return null;
   const color = urgencyColor(days);
-  const label = days <= 0 ? "MATURED" : days < 30 ? `${days}d 🔥` : `${days}d`;
-  return <span className="text-xs px-2 py-0.5 rounded font-mono font-bold" style={{ color, background: color+"18", border: `1px solid ${color}40` }}>{label}</span>;
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><label className="block text-xs mb-1 font-medium" style={{ color: "#484f58" }}>{label.toUpperCase()}</label>{children}</div>;
+  const label = days <= 0 ? "MATURED" : days < 30 ? `${days}d ð¥` : `${days}d`;
+  return (
+    <span
+      className="text-xs px-2 py-0.5 rounded font-mono font-bold"
+      style={{ color, background: color + "18", border: `1px solid ${color}40` }}
+    >
+      {label}
+    </span>
+  );
 }
 
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs mb-1 font-medium" style={{ color: "#484f58" }}>
+        {label.toUpperCase()}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+// ââ Main Component âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Lead | null>(null);
-  const [tab, setTab] = useState<"details"|"email"|"log">("details");
   const [statusFilter, setStatusFilter] = useState("all");
   const [saving, setSaving] = useState(false);
-  const [emailBody, setEmailBody] = useState("");
-  const [copied, setCopied] = useState(false);
   const [showNewLead, setShowNewLead] = useState(false);
+  const [emailBody, setEmailBody] = useState("");
+  const [showEmail, setShowEmail] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Edit state
   const [editFields, setEditFields] = useState<Lead["fields"]>({});
-  const [addMode, setAddMode] = useState<"search"|"manual">("search");
-  const [searchQ, setSearchQ] = useState("");
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
-  const [pickPhone, setPickPhone] = useState("");
-  const [callNote, setCallNote] = useState("");
 
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [activitiesLoading, setActivitiesLoading] = useState(false);
+  // Activity log state
   const [activityType, setActivityType] = useState("Call");
-  const [activitySummary, setActivitySummary] = useState("");
-
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activityText, setActivityText] = useState("");
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -155,308 +217,730 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     setLeads(Array.isArray(data) ? data : []);
     setLoading(false);
   }, []);
+
   useEffect(() => { load(); }, [load]);
 
-  const loadActivities = useCallback(async (leadId: string) => {
-    setActivitiesLoading(true);
-    const res = await fetch(`/api/hot-leads/${leadId}/activities`);
-    const data = await res.json();
-    setActivities(Array.isArray(data) ? data : []);
-    setActivitiesLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (searchQ.length < 2) { setSearchResults([]); return; }
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    setSearching(true);
-    searchTimer.current = setTimeout(async () => {
-      const res = await fetch(`/api/hot-leads/search?q=${encodeURIComponent(searchQ)}`);
-      const data = await res.json();
-      setSearchResults(Array.isArray(data) ? data : []);
-      setSearching(false);
-    }, 350);
-  }, [searchQ]);
-
   function openLead(lead: Lead) {
-    setSelected(lead); setEditFields({ ...lead.fields });
-    setEmailBody(generateEmailDraft(lead)); setTab("details");
-    setActivitySummary(""); setActivityType("Call");
-    loadActivities(lead.id);
+    setSelected(lead);
+    setEditFields({ ...lead.fields });
+    setEmailBody(generateEmailDraft(lead));
+    setShowEmail(false);
+    setActivityText("");
+    setActivityType("Call");
+    setActivityLog(parseActivityLog(
+      lead.fields.Notes,
+      lead.fields["Call Summary"],
+      lead.fields["Last Contact"],
+    ));
   }
 
   async function saveFields() {
-    if (!selected) return; setSaving(true);
-    await fetch(`/api/hot-leads/${selected.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editFields) });
-    setLeads(prev => prev.map(l => l.id === selected.id ? { ...l, fields: { ...l.fields, ...editFields } } : l));
-    setSelected(prev => prev ? { ...prev, fields: { ...prev.fields, ...editFields } } : null);
+    if (!selected) return;
+    setSaving(true);
+    await fetch(`/api/hot-leads/${selected.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(editFields),
+    });
+    setLeads((prev) =>
+      prev.map((l) => (l.id === selected.id ? { ...l, fields: { ...l.fields, ...editFields } } : l))
+    );
+    setSelected((prev) => prev ? { ...prev, fields: { ...prev.fields, ...editFields } } : null);
     setSaving(false);
   }
 
   async function logActivity() {
-    if (!selected || !activitySummary.trim()) return;
+    if (!selected || !activityText.trim()) return;
     setSaving(true);
-    const res = await fetch(`/api/hot-leads/${selected.id}/activities`, {
-      method: "POST",
+    const entry: ActivityEntry = {
+      type: activityType,
+      text: activityText.trim(),
+      ts: new Date().toISOString(),
+    };
+    const newLog = [entry, ...activityLog];
+    const now = new Date().toISOString().split("T")[0];
+    const updates: Lead["fields"] = {
+      Notes: JSON.stringify(newLog),
+      "Last Contact": now,
+      ...editFields,
+      // Mirror call summary for backward compat
+      ...(activityType === "Call" ? { "Call Summary": activityText.trim() } : {}),
+    };
+    await fetch(`/api/hot-leads/${selected.id}`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: activityType, summary: activitySummary, created_by: user === "david" ? "David" : "Gorjan" }),
+      body: JSON.stringify(updates),
     });
-    if (res.ok) {
-      const newAct = await res.json() as Activity;
-      setActivities(prev => [newAct, ...prev]);
-      const now = new Date().toISOString().split("T")[0];
-      setLeads(prev => prev.map(l => l.id === selected.id ? { ...l, fields: { ...l.fields, "Last Contact": now } } : l));
-      setSelected(prev => prev ? { ...prev, fields: { ...prev.fields, "Last Contact": now } } : null);
-      setActivitySummary("");
-    }
+    setLeads((prev) =>
+      prev.map((l) => (l.id === selected.id ? { ...l, fields: { ...l.fields, ...updates } } : l))
+    );
+    setSelected((prev) => prev ? { ...prev, fields: { ...prev.fields, ...updates } } : null);
+    setEditFields((prev) => ({ ...prev, ...updates }));
+    setActivityLog(newLog);
+    setActivityText("");
     setSaving(false);
   }
 
-  function copyEmail() { navigator.clipboard.writeText(emailBody); setCopied(true); setTimeout(() => setCopied(false), 2000); }
-
-  async function addFromSearch() {
-    if (!selectedResult) return; setSaving(true);
-    const loan = selectedResult.loan;
-    const phone = pickPhone || selectedResult.phones[0] || "";
-    await fetch("/api/hot-leads", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-      name: selectedResult.name, owner_id: selectedResult.owner_id,
-      loan_id: loan?.loan_id ?? null, capitalize_loan_id: loan?.capitalize_loan_id ?? null,
-      phone, property_address: loan?.property_address ?? "", property_city: loan?.property_city ?? "",
-      property_state: loan?.property_state ?? "", property_zip: loan?.property_zip ?? "",
-      property_type: loan?.property_type ?? "", loan_amount: loan?.loan_amount ?? null,
-      loan_amount_num: loan?.loan_amount_num ?? null, lender_name: loan?.lender_name ?? null,
-      due_date: loan?.due_date ?? null, interest_rate: loan?.interest_rate ?? null,
-      lead_score: loan?.lead_score ?? null, status: "Follow-Up",
-      call_summary: callNote || "Positive response — added manually.",
-      last_contact: new Date().toISOString().split("T")[0],
-      assigned_to: user === "david" ? "David" : "Gorjan", added_by: "manual",
-    })});
-    await load(); resetModal();
+  function copyEmail() {
+    navigator.clipboard.writeText(emailBody);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
-  const [newLead, setNewLead] = useState({ "Lead Name":"","Property Address":"","Loan Amount":"","Balloon Maturity":"","Lender Name":"","Property Type":"",Status:"New","Call Summary":"","Next Action":"Callback","Assigned To":user==="david"?"David":"Gorjan",Phone:"",Email:"" });
+  const filtered = statusFilter === "all"
+    ? leads
+    : leads.filter((l) => (l.fields.Status ?? "New") === statusFilter);
 
-  async function createManualLead() {
+  const statusCounts = leads.reduce<Record<string, number>>((acc, l) => {
+    const s = l.fields.Status ?? "New";
+    acc[s] = (acc[s] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  // Get all loans for the selected person (same Lead Name)
+  const relatedLoans = selected
+    ? leads.filter(
+        (l) =>
+          l.id !== selected.id &&
+          l.fields["Lead Name"] &&
+          l.fields["Lead Name"] === selected.fields["Lead Name"]
+      )
+    : [];
+
+  // Determine which contact to show based on "Connected Via"
+  const connectedVia = (editFields["Connected Via"] as string) ?? "";
+  const connectedContact =
+    connectedVia === "Phone" ? editFields.Phone :
+    connectedVia === "Email" ? editFields.Email :
+    null;
+
+  // ââ New Lead Form state ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  const [newLead, setNewLead] = useState({
+    "Lead Name": "", "Property Address": "", "Loan Amount": "",
+    "Balloon Maturity": "", "Lender Name": "", "Property Type": "",
+    Status: "New", "Call Summary": "", "Next Action": "Callback",
+    "Assigned To": user === "david" ? "David" : "Gorjan",
+  });
+
+  async function createLead() {
     setSaving(true);
-    const fields: Record<string,string|number> = {};
-    Object.entries(newLead).forEach(([k,v]) => { if (!v) return; if (k==="Loan Amount") fields[k]=Number(v); else fields[k]=v; });
+    const fields: Record<string, string | number> = {};
+    Object.entries(newLead).forEach(([k, v]) => {
+      if (!v) return;
+      if (k === "Loan Amount") fields[k] = Number(v);
+      else fields[k] = v;
+    });
     fields["Last Contact"] = new Date().toISOString().split("T")[0];
-    await fetch("/api/hot-leads", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(fields) });
-    await load(); resetModal();
+    await fetch("/api/hot-leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+    await load();
+    setShowNewLead(false);
+    setNewLead({
+      "Lead Name": "", "Property Address": "", "Loan Amount": "",
+      "Balloon Maturity": "", "Lender Name": "", "Property Type": "",
+      Status: "New", "Call Summary": "", "Next Action": "Callback",
+      "Assigned To": user === "david" ? "David" : "Gorjan",
+    });
+    setSaving(false);
   }
 
-  function resetModal() {
-    setShowNewLead(false); setSearchQ(""); setSearchResults([]); setSelectedResult(null);
-    setPickPhone(""); setCallNote(""); setSaving(false);
-    setNewLead({ "Lead Name":"","Property Address":"","Loan Amount":"","Balloon Maturity":"","Lender Name":"","Property Type":"",Status:"New","Call Summary":"","Next Action":"Callback","Assigned To":user==="david"?"David":"Gorjan",Phone:"",Email:"" });
-  }
-
-  const filtered = statusFilter==="all" ? leads : leads.filter(l => (l.fields.Status??"New")===statusFilter);
-  const statusCounts = leads.reduce<Record<string,number>>((acc,l) => { const s=l.fields.Status??"New"; acc[s]=(acc[s]??0)+1; return acc; }, {});
-
+  // ââ Render âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   return (
-    <div className="flex h-full" style={{color:"#e6edf3"}}>
+    <div className="flex h-full" style={{ color: "#e6edf3" }}>
+
+      {/* ââ Left: Lead List ââ */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <div className="px-6 pt-6 pb-4 border-b" style={{borderColor:"#30363d"}}>
+        {/* Header */}
+        <div className="px-6 pt-6 pb-4 border-b" style={{ borderColor: "#30363d" }}>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-xl font-semibold" style={{color:"#e6edf3"}}>Hot Leads</h1>
-              <p className="text-sm mt-0.5" style={{color:"#8b949e"}}>{leads.length} leads · {leads.filter(l=>{const d=daysUntil(l.fields["Balloon Maturity"]);return d!==null&&d<90;}).length} maturing within 90 days</p>
+              <h1 className="text-xl font-semibold" style={{ color: "#e6edf3" }}>Hot Leads</h1>
+              <p className="text-sm mt-0.5" style={{ color: "#8b949e" }}>
+                {leads.length} leads Â· {leads.filter(l => {
+                  const d = daysUntil(l.fields["Balloon Maturity"]);
+                  return d !== null && d < 90;
+                }).length} maturing within 90 days
+              </p>
             </div>
-            <button onClick={()=>{setAddMode("search");setShowNewLead(true);}} className="px-3 py-1.5 rounded-md text-sm font-medium" style={{background:"#238636",color:"#fff",border:"1px solid #2ea043"}}>+ Add Lead</button>
+            <button
+              onClick={() => setShowNewLead(true)}
+              className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
+              style={{ background: "#238636", color: "#fff", border: "1px solid #2ea043" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#2ea043")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#238636")}
+            >
+              + Add Lead
+            </button>
           </div>
+
+          {/* Status filter tabs */}
           <div className="flex gap-1 overflow-x-auto pb-1">
-            {["all",...STATUSES].map(s => {
-              const count=s==="all"?leads.length:(statusCounts[s]??0); const active=statusFilter===s;
-              return <button key={s} onClick={()=>setStatusFilter(s)} className="shrink-0 px-3 py-1 rounded text-xs" style={{background:active?"#21262d":"transparent",color:active?"#e6edf3":"#8b949e",border:active?"1px solid #30363d":"1px solid transparent"}}>{s==="all"?"All":s}{count>0?` (${count})`:""}</button>;
+            {["all", ...STATUSES].map((s) => {
+              const count = s === "all" ? leads.length : (statusCounts[s] ?? 0);
+              const active = statusFilter === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => setStatusFilter(s)}
+                  className="shrink-0 px-3 py-1 rounded text-xs transition-colors"
+                  style={{
+                    background: active ? "#21262d" : "transparent",
+                    color: active ? "#e6edf3" : "#8b949e",
+                    border: active ? "1px solid #30363d" : "1px solid transparent",
+                  }}
+                >
+                  {s === "all" ? "All" : s} {count > 0 ? <span style={{ color: "#484f58" }}>({count})</span> : null}
+                </button>
+              );
             })}
           </div>
         </div>
+
+        {/* Lead cards */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {loading ? <div className="flex items-center justify-center h-40" style={{color:"#8b949e"}}>Loading…</div>
-          : filtered.length===0 ? <div className="flex flex-col items-center justify-center h-40 gap-2" style={{color:"#8b949e"}}><span className="text-2xl">📭</span><span className="text-sm">No leads in this status</span></div>
-          : filtered.map(lead => {
-            const f=lead.fields; const days=daysUntil(f["Balloon Maturity"]); const isActive=selected?.id===lead.id;
-            return <div key={lead.id} onClick={()=>openLead(lead)} className="rounded-lg p-4 cursor-pointer" style={{background:isActive?"#21262d":"#0d1117",border:`1px solid ${isActive?"#58a6ff40":"#21262d"}`}}>
-              <div className="flex items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="font-medium text-sm" style={{color:"#e6edf3"}}>{f["Lead Name"]??"Unknown"}</span>
-                    <StatusBadge status={f.Status} />
-                    {days!==null&&<UrgencyPill days={days}/>}
-                    {f.mojo_status&&<span className="text-xs px-1.5 py-0.5 rounded" style={{background:"#0d1117",color:"#58a6ff",border:"1px solid #1f6feb"}}>Mojo: {f.mojo_status}</span>}
-                  </div>
-                  <div className="text-xs mb-1.5" style={{color:"#8b949e"}}>📍 {f["Property Address"]??"—"}{f["Property Type"]&&<span className="ml-2 px-1.5 py-0.5 rounded" style={{background:"#21262d",color:"#8b949e"}}>{f["Property Type"]}</span>}</div>
-                  {f["Call Summary"]&&<div className="text-xs line-clamp-2 mb-1.5" style={{color:"#8b949e"}}>💬 {f["Call Summary"]}</div>}
-                  <div className="flex items-center gap-3 text-xs" style={{color:"#484f58"}}>
-                    {f["Loan Amount"]&&<span>💰 {fmt(f["Loan Amount"])}</span>}
-                    {f["Lender Name"]&&<span>🏦 {f["Lender Name"]}</span>}
-                    {f["Next Action"]&&<span className="px-1.5 py-0.5 rounded" style={{background:"#161b22",color:"#58a6ff"}}>→ {f["Next Action"]}</span>}
+          {loading ? (
+            <div className="flex items-center justify-center h-40" style={{ color: "#8b949e" }}>Loadingâ¦</div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2" style={{ color: "#8b949e" }}>
+              <span className="text-2xl">ð­</span>
+              <span className="text-sm">No leads in this status</span>
+            </div>
+          ) : (
+            filtered.map((lead) => {
+              const f = lead.fields;
+              const days = daysUntil(f["Balloon Maturity"]);
+              const isActive = selected?.id === lead.id;
+              // Count other loans for this person
+              const loanCount = leads.filter(
+                l => l.fields["Lead Name"] === f["Lead Name"]
+              ).length;
+              return (
+                <div
+                  key={lead.id}
+                  onClick={() => openLead(lead)}
+                  className="rounded-lg p-4 cursor-pointer transition-colors"
+                  style={{
+                    background: isActive ? "#21262d" : "#0d1117",
+                    border: `1px solid ${isActive ? "#58a6ff40" : "#21262d"}`,
+                  }}
+                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.borderColor = "#30363d"; }}
+                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.borderColor = "#21262d"; }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="font-medium text-sm" style={{ color: "#e6edf3" }}>
+                          {f["Lead Name"] ?? "Unknown"}
+                        </span>
+                        <StatusBadge status={f.Status} />
+                        {days !== null && <UrgencyPill days={days} />}
+                        {loanCount > 1 && (
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#1f2937", color: "#58a6ff", border: "1px solid #1f6feb40" }}>
+                            {loanCount} loans
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs mb-1.5" style={{ color: "#8b949e" }}>
+                        ð {f["Property Address"] ?? "â"}
+                        {f["Property Type"] && <span className="ml-2 px-1.5 py-0.5 rounded text-xs" style={{ background: "#21262d", color: "#8b949e" }}>{f["Property Type"]}</span>}
+                      </div>
+                      {f["Call Summary"] && (
+                        <div className="text-xs line-clamp-2 mb-1.5" style={{ color: "#8b949e" }}>
+                          ð {f["Call Summary"]}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3 text-xs" style={{ color: "#484f58" }}>
+                        {f["Loan Amount"] && <span>ð° {fmt(f["Loan Amount"])}</span>}
+                        {f["Lender Name"] && <span>ð¦ {f["Lender Name"]}</span>}
+                        {f["Next Action"] && (
+                          <span className="px-1.5 py-0.5 rounded" style={{ background: "#161b22", color: "#58a6ff" }}>
+                            â {f["Next Action"]}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>;
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 
-      {selected&&(
-        <div className="flex flex-col border-l overflow-hidden" style={{width:480,borderColor:"#30363d",background:"#0d1117"}}>
-          <div className="flex items-center justify-between px-5 py-4 border-b" style={{borderColor:"#30363d"}}>
-            <div><div className="font-semibold text-sm" style={{color:"#e6edf3"}}>{selected.fields["Lead Name"]??"Lead"}</div><div className="text-xs mt-0.5" style={{color:"#8b949e"}}>{selected.fields["Property Address"]??""}</div></div>
-            <button onClick={()=>setSelected(null)} style={{color:"#484f58"}}>×</button>
+      {/* ââ Right: Detail Panel (no tabs) ââ */}
+      {selected && (
+        <div
+          className="flex flex-col border-l overflow-hidden"
+          style={{ width: 500, borderColor: "#30363d", background: "#0d1117" }}
+        >
+          {/* Panel header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b shrink-0" style={{ borderColor: "#30363d" }}>
+            <div>
+              <div className="font-semibold text-sm" style={{ color: "#e6edf3" }}>
+                {selected.fields["Lead Name"] ?? "Lead"}
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: "#8b949e" }}>
+                {selected.fields["Property Address"] ?? ""}
+              </div>
+            </div>
+            <button
+              onClick={() => setSelected(null)}
+              className="text-lg leading-none"
+              style={{ color: "#484f58" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
+            >
+              Ã
+            </button>
           </div>
-          <div className="flex border-b" style={{borderColor:"#30363d"}}>
-            {(["details","email","log"] as const).map(t=>(
-              <button key={t} onClick={()=>setTab(t)} className="flex-1 py-2.5 text-xs font-medium capitalize" style={{color:tab===t?"#e6edf3":"#8b949e",borderBottom:tab===t?"2px solid #58a6ff":"2px solid transparent"}}>
-                {t==="details"?"📋 Details":t==="email"?"✉️ Email":"🗂 Activity"}
-              </button>
-            ))}
-          </div>
+
+          {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto">
-            {tab==="details"&&(
-              <div className="p-5 space-y-4">
+            <div className="p-5 space-y-5">
+
+              {/* ââ Quick Stats ââ */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+                  <div className="text-xs mb-1" style={{ color: "#484f58" }}>LOAN AMOUNT</div>
+                  <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{fmt(editFields["Loan Amount"] as number | undefined)}</div>
+                </div>
+                <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+                  <div className="text-xs mb-1" style={{ color: "#484f58" }}>MATURES</div>
+                  <div className="text-sm font-medium" style={{ color: urgencyColor(daysUntil(editFields["Balloon Maturity"] as string | undefined)) }}>
+                    {editFields["Balloon Maturity"]
+                      ? new Date(editFields["Balloon Maturity"] as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                      : "â"}
+                  </div>
+                </div>
+                <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+                  <div className="text-xs mb-1" style={{ color: "#484f58" }}>LENDER</div>
+                  <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{(editFields["Lender Name"] as string) || "â"}</div>
+                </div>
+                <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+                  <div className="text-xs mb-1" style={{ color: "#484f58" }}>
+                    {connectedVia ? `CONNECTED VIA ${connectedVia.toUpperCase()}` : "CONTACT"}
+                  </div>
+                  <div className="text-sm font-medium" style={{ color: connectedVia ? "#3fb950" : "#484f58" }}>
+                    {connectedContact || (connectedVia ? "â" : "Not set")}
+                  </div>
+                </div>
+              </div>
+
+              {/* ââ Other Loans ââ */}
+              {relatedLoans.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium mb-2" style={{ color: "#484f58" }}>
+                    OTHER LOANS â {selected.fields["Lead Name"]}
+                  </div>
+                  <div className="space-y-2">
+                    {relatedLoans.map((loan) => {
+                      const d = daysUntil(loan.fields["Balloon Maturity"]);
+                      return (
+                        <div
+                          key={loan.id}
+                          onClick={() => openLead(loan)}
+                          className="rounded-md p-3 cursor-pointer transition-colors"
+                          style={{ background: "#161b22", border: "1px solid #21262d" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#30363d")}
+                          onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#21262d")}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs truncate" style={{ color: "#8b949e" }}>
+                                ð {loan.fields["Property Address"] ?? "â"}
+                              </div>
+                              <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: "#484f58" }}>
+                                {loan.fields["Loan Amount"] && <span>{fmt(loan.fields["Loan Amount"])}</span>}
+                                {loan.fields["Lender Name"] && <span>{loan.fields["Lender Name"]}</span>}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <StatusBadge status={loan.fields.Status} />
+                              {d !== null && <UrgencyPill days={d} />}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ââ Recommended Steps ââ */}
+              {editFields["Recommended Steps"] && (
+                <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+                  <div className="text-xs mb-2" style={{ color: "#484f58" }}>RECOMMENDED STEPS</div>
+                  <div className="text-xs whitespace-pre-wrap" style={{ color: "#8b949e" }}>
+                    {editFields["Recommended Steps"] as string}
+                  </div>
+                </div>
+              )}
+
+              {/* ââ Editable Fields ââ */}
+              <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
-                  {[{label:"Loan Amount",value:fmt(editFields["Loan Amount"] as number|undefined)},{label:"Matures",value:editFields["Balloon Maturity"]?new Date(editFields["Balloon Maturity"] as string).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—",accent:urgencyColor(daysUntil(editFields["Balloon Maturity"] as string|undefined))},{label:"Lender",value:(editFields["Lender Name"] as string)||"—"},{label:"Phone",value:(editFields["Phone"] as string)?fmtPhone(editFields["Phone"] as string):"—"}].map(({label,value,accent})=>(
-                    <div key={label} className="rounded-md p-3" style={{background:"#161b22",border:"1px solid #21262d"}}><div className="text-xs mb-1" style={{color:"#484f58"}}>{label}</div><div className="text-sm font-medium" style={{color:accent??"#e6edf3"}}>{value}</div></div>
-                  ))}
+                  <Field label="Status">
+                    <select
+                      value={(editFields.Status as string) ?? "New"}
+                      onChange={(e) => setEditFields((p) => ({ ...p, Status: e.target.value }))}
+                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                    >
+                      {STATUSES.map((s) => <option key={s}>{s}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Next Action">
+                    <select
+                      value={(editFields["Next Action"] as string) ?? ""}
+                      onChange={(e) => setEditFields((p) => ({ ...p, "Next Action": e.target.value }))}
+                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                    >
+                      <option value="">â</option>
+                      {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
+                    </select>
+                  </Field>
                 </div>
-                <div className="space-y-3">
-                  <Field label="Status"><select value={(editFields.Status as string)??"New"} onChange={e=>setEditFields(p=>({...p,Status:e.target.value}))} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm">{STATUSES.map(s=><option key={s}>{s}</option>)}</select></Field>
-                  <Field label="Next Action"><select value={(editFields["Next Action"] as string)??""} onChange={e=>setEditFields(p=>({...p,"Next Action":e.target.value}))} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm"><option value="">—</option>{NEXT_ACTIONS.map(a=><option key={a}>{a}</option>)}</select></Field>
-                  <Field label="Callback Date"><input type="date" value={(editFields["Callback Date"] as string)??""} onChange={e=>setEditFields(p=>({...p,"Callback Date":e.target.value}))} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm"/></Field>
-                  <Field label="Email"><input type="email" value={(editFields.Email as string)??""} onChange={e=>setEditFields(p=>({...p,Email:e.target.value}))} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm" placeholder="borrower@email.com"/></Field>
-                  <Field label="Notes"><textarea rows={3} value={(editFields.Notes as string)??""} onChange={e=>setEditFields(p=>({...p,Notes:e.target.value}))} style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d",resize:"vertical"}} className="w-full rounded px-2 py-1.5 text-sm" placeholder="Free-form notes…"/></Field>
+
+                <Field label="Callback Date">
+                  <input
+                    type="date"
+                    value={(editFields["Callback Date"] as string) ?? ""}
+                    onChange={(e) => setEditFields((p) => ({ ...p, "Callback Date": e.target.value }))}
+                    style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
+                    className="w-full rounded px-2 py-1.5 text-sm"
+                  />
+                </Field>
+
+                <Field label="Connected Via">
+                  <div className="flex gap-2">
+                    {["", "Phone", "Email"].map((opt) => (
+                      <button
+                        key={opt}
+                        onClick={() => setEditFields((p) => ({ ...p, "Connected Via": opt }))}
+                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{
+                          background: connectedVia === opt ? "#1f6feb" : "#161b22",
+                          color: connectedVia === opt ? "#fff" : "#8b949e",
+                          border: `1px solid ${connectedVia === opt ? "#1f6feb" : "#30363d"}`,
+                        }}
+                      >
+                        {opt === "" ? "None" : opt === "Phone" ? "ð Phone" : "âï¸ Email"}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+
+                {(connectedVia === "Phone" || !connectedVia) && (
+                  <Field label="Phone">
+                    <input
+                      type="tel"
+                      value={(editFields.Phone as string) ?? ""}
+                      onChange={(e) => setEditFields((p) => ({ ...p, Phone: e.target.value }))}
+                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                      placeholder="(555) 000-0000"
+                    />
+                  </Field>
+                )}
+
+                {(connectedVia === "Email" || !connectedVia) && (
+                  <Field label="Email">
+                    <input
+                      type="email"
+                      value={(editFields.Email as string) ?? ""}
+                      onChange={(e) => setEditFields((p) => ({ ...p, Email: e.target.value }))}
+                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                      placeholder="borrower@email.com"
+                    />
+                  </Field>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Property Type">
+                    <select
+                      value={(editFields["Property Type"] as string) ?? ""}
+                      onChange={(e) => setEditFields((p) => ({ ...p, "Property Type": e.target.value }))}
+                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                    >
+                      <option value="">â</option>
+                      {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Loan Amount ($)">
+                    <input
+                      type="number"
+                      value={(editFields["Loan Amount"] as number) ?? ""}
+                      onChange={(e) => setEditFields((p) => ({ ...p, "Loan Amount": Number(e.target.value) }))}
+                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                      placeholder="e.g. 1500000"
+                    />
+                  </Field>
                 </div>
-                <button onClick={saveFields} disabled={saving} className="w-full py-2 rounded-md text-sm font-medium" style={{background:saving?"#21262d":"#1f6feb",color:saving?"#484f58":"#fff",border:"1px solid #30363d"}}>{saving?"Saving…":"Save Changes"}</button>
               </div>
-            )}
-            {tab==="email"&&(
-              <div className="p-5 space-y-3">
-                <div className="flex items-center justify-between"><span className="text-xs font-medium" style={{color:"#484f58"}}>FOLLOW-UP EMAIL DRAFT</span><button onClick={()=>setEmailBody(generateEmailDraft(selected))} className="text-xs px-2 py-1 rounded" style={{color:"#8b949e",border:"1px solid #30363d",background:"#161b22"}}>↺ Regenerate</button></div>
-                <textarea rows={20} value={emailBody} onChange={e=>setEmailBody(e.target.value)} className="w-full rounded-md p-3 text-xs font-mono" style={{background:"#161b22",color:"#e6edf3",border:"1px solid #30363d",resize:"vertical",lineHeight:1.6}}/>
-                <div className="flex gap-2">
-                  <button onClick={copyEmail} className="flex-1 py-2 rounded-md text-sm font-medium" style={{background:copied?"#238636":"#1f6feb",color:"#fff",border:"1px solid #30363d"}}>{copied?"✓ Copied!":"Copy to Clipboard"}</button>
-                  {selected.fields.Email&&<a href={`mailto:${selected.fields.Email}?subject=Refinancing%20${encodeURIComponent(selected.fields["Property Address"]??"")}&body=${encodeURIComponent(emailBody)}`} className="flex-1 py-2 rounded-md text-sm font-medium text-center" style={{background:"#161b22",color:"#8b949e",border:"1px solid #30363d"}}>Open in Mail App</a>}
-                </div>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={saveFields}
+                  disabled={saving}
+                  className="flex-1 py-2 rounded-md text-sm font-medium transition-colors"
+                  style={{
+                    background: saving ? "#21262d" : "#1f6feb",
+                    color: saving ? "#484f58" : "#fff",
+                    border: "1px solid #30363d",
+                  }}
+                >
+                  {saving ? "Savingâ¦" : "Save Changes"}
+                </button>
+                <button
+                  onClick={() => setShowEmail(!showEmail)}
+                  className="px-3 py-2 rounded-md text-sm transition-colors"
+                  style={{ background: "#161b22", color: "#8b949e", border: "1px solid #30363d" }}
+                >
+                  âï¸ Draft Email
+                </button>
               </div>
-            )}
-            {tab==="log"&&(
-              <div className="p-5 space-y-4">
-                <div className="rounded-lg p-4 space-y-3" style={{background:"#161b22",border:"1px solid #21262d"}}>
-                  <div className="text-xs font-medium" style={{color:"#8b949e"}}>LOG ACTIVITY</div>
+
+              {/* ââ Email Draft (collapsible) ââ */}
+              {showEmail && (
+                <div className="space-y-3 rounded-lg p-4" style={{ background: "#161b22", border: "1px solid #30363d" }}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium" style={{ color: "#484f58" }}>FOLLOW-UP EMAIL DRAFT</span>
+                    <button
+                      onClick={() => setEmailBody(generateEmailDraft(selected))}
+                      className="text-xs px-2 py-1 rounded"
+                      style={{ color: "#8b949e", border: "1px solid #30363d", background: "#0d1117" }}
+                    >
+                      âº Regenerate
+                    </button>
+                  </div>
+                  <textarea
+                    rows={12}
+                    value={emailBody}
+                    onChange={(e) => setEmailBody(e.target.value)}
+                    className="w-full rounded-md p-3 text-xs font-mono"
+                    style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical", lineHeight: 1.6 }}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={copyEmail}
+                      className="flex-1 py-2 rounded-md text-sm font-medium"
+                      style={{ background: copied ? "#238636" : "#1f6feb", color: "#fff", border: "1px solid #30363d" }}
+                    >
+                      {copied ? "â Copied!" : "Copy to Clipboard"}
+                    </button>
+                    {editFields.Email && (
+                      <a
+                        href={`mailto:${editFields.Email}?subject=Refinancing%20${encodeURIComponent(editFields["Property Address"] as string ?? "")}&body=${encodeURIComponent(emailBody)}`}
+                        className="flex-1 py-2 rounded-md text-sm font-medium text-center"
+                        style={{ background: "#161b22", color: "#8b949e", border: "1px solid #30363d" }}
+                      >
+                        Open in Mail App
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ââ Activity Log ââ */}
+              <div style={{ borderTop: "1px solid #21262d", paddingTop: 20 }}>
+                <div className="text-xs font-medium mb-3" style={{ color: "#484f58" }}>ACTIVITY</div>
+
+                {/* Activity History â shown first */}
+                {activityLog.length === 0 ? (
+                  <div className="text-xs text-center py-4 mb-4 rounded-md" style={{ color: "#484f58", background: "#161b22", border: "1px solid #21262d" }}>
+                    No activity yet â log the first interaction below.
+                  </div>
+                ) : (
+                  <div className="mb-4" style={{ position: "relative" }}>
+                    {/* Timeline line */}
+                    <div style={{ position: "absolute", left: 15, top: 0, bottom: 0, width: 1, background: "#21262d" }} />
+                    <div className="space-y-3">
+                      {activityLog.map((entry, i) => {
+                        const date = new Date(entry.ts);
+                        const dateStr = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+                        const timeStr = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+                        const color = ACTIVITY_COLORS[entry.type] ?? "#8b949e";
+                        return (
+                          <div key={i} className="flex gap-3" style={{ position: "relative" }}>
+                            {/* Icon dot on timeline */}
+                            <div
+                              className="shrink-0 flex items-center justify-center rounded-full text-xs"
+                              style={{ width: 30, height: 30, background: color + "20", border: `1px solid ${color}60`, color, zIndex: 1 }}
+                            >
+                              {ACTIVITY_ICONS[entry.type]}
+                            </div>
+                            {/* Content */}
+                            <div className="flex-1 min-w-0 rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <span className="text-xs font-semibold" style={{ color }}>
+                                  {entry.type}
+                                </span>
+                                <span className="text-xs" style={{ color: "#484f58" }}>
+                                  {dateStr} Â· {timeStr}
+                                </span>
+                              </div>
+                              <div className="text-xs" style={{ color: "#8b949e", lineHeight: 1.6 }}>
+                                {entry.text}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Log new entry */}
+                <div className="rounded-md p-3 space-y-2" style={{ background: "#161b22", border: "1px solid #30363d" }}>
+                  <div className="text-xs font-medium mb-2" style={{ color: "#484f58" }}>LOG NEW INTERACTION</div>
+                  {/* Type selector */}
                   <div className="flex gap-1">
-                    {ACTIVITY_TYPES.map(t => (
-                      <button key={t} onClick={()=>setActivityType(t)} className="flex-1 py-1.5 rounded text-xs font-medium" style={{background:activityType===t?"#21262d":"transparent",color:activityType===t?"#e6edf3":"#484f58",border:activityType===t?"1px solid #30363d":"1px solid #21262d"}}>
-                        {ACTIVITY_ICONS[t]} {t}
+                    {ACTIVITY_TYPES.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setActivityType(t)}
+                        className="flex-1 py-1.5 rounded text-xs font-medium transition-colors"
+                        style={{
+                          background: activityType === t ? ACTIVITY_COLORS[t] + "25" : "#0d1117",
+                          color: activityType === t ? ACTIVITY_COLORS[t] : "#484f58",
+                          border: `1px solid ${activityType === t ? ACTIVITY_COLORS[t] + "60" : "#21262d"}`,
+                        }}
+                      >
+                        {ACTIVITY_ICONS[t]}
+                        <span className="ml-1 hidden sm:inline">{t}</span>
                       </button>
                     ))}
                   </div>
                   <textarea
-                    rows={3}
-                    value={activitySummary}
-                    onChange={e=>setActivitySummary(e.target.value)}
-                    style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d",resize:"vertical"}}
+                    rows={2}
+                    value={activityText}
+                    onChange={(e) => setActivityText(e.target.value)}
+                    style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #21262d", resize: "vertical" }}
                     className="w-full rounded px-2 py-1.5 text-sm"
                     placeholder={
-                      activityType==="Call" ? "What happened on the call? Tone, objections, interest level…" :
-                      activityType==="Email" ? "What did you send? Subject, key points…" :
-                      activityType==="Text" ? "What did you text? Their response?" :
-                      activityType==="Meeting" ? "What was discussed? Outcomes, next steps…" :
-                      "Note…"
+                      activityType === "Call" ? "What happened on this call?" :
+                      activityType === "Email" ? "What did you send or receive?" :
+                      activityType === "Text" ? "What was the text exchange?" :
+                      activityType === "Meeting" ? "What was discussed?" :
+                      "Add a noteâ¦"
                     }
                   />
                   <button
                     onClick={logActivity}
-                    disabled={saving||!activitySummary.trim()}
-                    className="w-full py-2 rounded-md text-sm font-medium"
-                    style={{background:saving||!activitySummary.trim()?"#21262d":"#238636",color:saving||!activitySummary.trim()?"#484f58":"#fff",border:"1px solid #30363d"}}
+                    disabled={saving || !activityText.trim()}
+                    className="w-full py-1.5 rounded text-sm font-medium transition-colors"
+                    style={{
+                      background: saving || !activityText.trim() ? "#21262d" : ACTIVITY_COLORS[activityType] + "30",
+                      color: saving || !activityText.trim() ? "#484f58" : ACTIVITY_COLORS[activityType],
+                      border: `1px solid ${saving || !activityText.trim() ? "#30363d" : ACTIVITY_COLORS[activityType] + "60"}`,
+                    }}
                   >
-                    {saving?"Saving…":`Log ${activityType}`}
+                    {saving ? "Savingâ¦" : `${ACTIVITY_ICONS[activityType]} Log ${activityType}`}
                   </button>
                 </div>
-                <div>
-                  <div className="text-xs font-medium mb-3" style={{color:"#484f58"}}>HISTORY</div>
-                  {activitiesLoading ? (
-                    <div className="text-xs py-4 text-center" style={{color:"#484f58"}}>Loading…</div>
-                  ) : activities.length === 0 ? (
-                    <div className="text-xs py-4 text-center" style={{color:"#484f58"}}>No activity yet — log the first interaction above.</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {activities.map(act => (
-                        <div key={act.id} className="rounded-md p-3" style={{background:"#161b22",border:"1px solid #21262d"}}>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs font-medium" style={{color:"#e6edf3"}}>
-                              {ACTIVITY_ICONS[act.type] ?? "•"} {act.type}
-                            </span>
-                            <span className="text-xs" style={{color:"#484f58"}}>{fmtDateTime(act.created_at)}</span>
-                          </div>
-                          <div className="text-xs" style={{color:"#8b949e",lineHeight:1.5}}>{act.summary}</div>
-                          <div className="text-xs mt-1.5" style={{color:"#484f58"}}>{act.created_by}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
-            )}
+
+            </div>
           </div>
         </div>
       )}
 
-      {showNewLead&&(
-        <div className="fixed inset-0 flex items-center justify-center z-50" style={{background:"rgba(0,0,0,0.75)"}} onClick={e=>{if(e.target===e.currentTarget)resetModal();}}>
-          <div className="rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" style={{background:"#161b22",border:"1px solid #30363d"}}>
-            <div className="flex items-center justify-between px-5 py-4 border-b" style={{borderColor:"#30363d"}}><span className="font-semibold text-sm" style={{color:"#e6edf3"}}>Add Hot Lead</span><button onClick={resetModal} style={{color:"#484f58"}}>×</button></div>
-            <div className="flex border-b" style={{borderColor:"#30363d"}}>
-              {(["search","manual"] as const).map(m=>(
-                <button key={m} onClick={()=>setAddMode(m)} className="flex-1 py-2.5 text-xs font-medium" style={{color:addMode===m?"#e6edf3":"#8b949e",borderBottom:addMode===m?"2px solid #58a6ff":"2px solid transparent"}}>
-                  {m==="search"?"🔍 Search Database":"✏️ Manual Entry"}
-                </button>
-              ))}
+      {/* ââ New Lead Modal ââ */}
+      {showNewLead && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowNewLead(false); }}
+        >
+          <div
+            className="rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            style={{ background: "#161b22", border: "1px solid #30363d" }}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#30363d" }}>
+              <span className="font-semibold text-sm" style={{ color: "#e6edf3" }}>Add Hot Lead</span>
+              <button onClick={() => setShowNewLead(false)} style={{ color: "#484f58" }}>Ã</button>
             </div>
-            {addMode==="search"&&(
-              <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-                <input autoFocus type="text" value={searchQ} onChange={e=>{setSearchQ(e.target.value);setSelectedResult(null);}} style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-3 py-2 text-sm" placeholder="Search by name or phone number…"/>
-                {searching&&<div className="text-xs" style={{color:"#8b949e"}}>Searching…</div>}
-                {searchResults.length>0&&!selectedResult&&(
-                  <div className="space-y-2">
-                    {searchResults.map(r=>(
-                      <div key={r.owner_id} onClick={()=>{setSelectedResult(r);setPickPhone(r.phones[0]??"");}} className="rounded-lg p-3 cursor-pointer" style={{background:"#0d1117",border:"1px solid #21262d"}}>
-                        <div className="font-medium text-sm mb-1" style={{color:"#e6edf3"}}>{r.name}</div>
-                        <div className="text-xs space-y-0.5" style={{color:"#8b949e"}}>
-                          {r.phones.length>0&&<div>📞 {r.phones.map(fmtPhone).join(" · ")}</div>}
-                          {r.loan?<><div>📍 {r.loan.property_address}, {r.loan.property_city} {r.loan.property_state}</div><div>💰 {r.loan.loan_amount} · 🏦 {r.loan.lender_name} · Due {r.loan.due_date?.slice(0,7)}</div></>:<div style={{color:"#484f58"}}>No loan found</div>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {searchQ.length>=2&&!searching&&searchResults.length===0&&<div className="text-sm text-center py-4" style={{color:"#484f58"}}>No matches — try manual entry</div>}
-                {selectedResult&&(
-                  <div className="space-y-3">
-                    <div className="rounded-lg p-3" style={{background:"#0d1117",border:"1px solid #238636"}}>
-                      <div className="font-semibold text-sm mb-2" style={{color:"#3fb950"}}>✓ {selectedResult.name}</div>
-                      {selectedResult.loan&&<div className="text-xs space-y-0.5" style={{color:"#8b949e"}}><div>📍 {selectedResult.loan.property_address}, {selectedResult.loan.property_city} {selectedResult.loan.property_state}</div><div>💰 {selectedResult.loan.loan_amount} · 🏦 {selectedResult.loan.lender_name}</div><div>📅 Due: {selectedResult.loan.due_date} · Rate: {selectedResult.loan.interest_rate}</div><div>🏗 {selectedResult.loan.property_type}</div></div>}
-                    </div>
-                    {selectedResult.phones.length>1&&<Field label="Select Phone"><select value={pickPhone} onChange={e=>setPickPhone(e.target.value)} style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm">{selectedResult.phones.map(p=><option key={p} value={p}>{fmtPhone(p)}</option>)}</select></Field>}
-                    <Field label="Call Note"><textarea rows={2} value={callNote} onChange={e=>setCallNote(e.target.value)} style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d",resize:"vertical"}} className="w-full rounded px-2 py-1.5 text-sm" placeholder="Positive response from call…"/></Field>
-                    <button onClick={()=>setSelectedResult(null)} className="text-xs" style={{color:"#8b949e"}}>← Back to results</button>
-                  </div>
-                )}
-              </div>
-            )}
-            {addMode==="manual"&&(
-              <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-                {[{key:"Lead Name",placeholder:"John Smith",type:"text"},{key:"Phone",placeholder:"229-400-8533",type:"tel"},{key:"Property Address",placeholder:"123 Main St, Iron City GA",type:"text"},{key:"Loan Amount",placeholder:"806000",type:"number"},{key:"Balloon Maturity",placeholder:"",type:"date"},{key:"Lender Name",placeholder:"Peoples South Bank",type:"text"},{key:"Email",placeholder:"borrower@email.com",type:"email"}].map(({key,placeholder,type})=>(
-                  <Field key={key} label={key}><input type={type} value={(newLead as Record<string,string>)[key]??""} onChange={e=>setNewLead(p=>({...p,[key]:e.target.value}))} style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm" placeholder={placeholder}/></Field>
-                ))}
-                <Field label="Property Type"><select value={newLead["Property Type"]} onChange={e=>setNewLead(p=>({...p,"Property Type":e.target.value}))} style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d"}} className="w-full rounded px-2 py-1.5 text-sm"><option value="">—</option>{PROPERTY_TYPES.map(t=><option key={t}>{t}</option>)}</select></Field>
-                <Field label="Call Summary"><textarea rows={3} value={newLead["Call Summary"]} onChange={e=>setNewLead(p=>({...p,"Call Summary":e.target.value}))} style={{background:"#0d1117",color:"#e6edf3",border:"1px solid #30363d",resize:"vertical"}} className="w-full rounded px-2 py-1.5 text-sm" placeholder="What happened on the call?"/></Field>
-              </div>
-            )}
-            <div className="flex gap-2 px-5 py-4 border-t" style={{borderColor:"#30363d"}}>
-              <button onClick={resetModal} className="flex-1 py-2 rounded-md text-sm" style={{background:"#21262d",color:"#8b949e",border:"1px solid #30363d"}}>Cancel</button>
-              <button onClick={addMode==="search"?addFromSearch:createManualLead} disabled={saving||(addMode==="search"&&!selectedResult)||(addMode==="manual"&&!newLead["Lead Name"])} className="flex-1 py-2 rounded-md text-sm font-medium" style={{background:(saving||(addMode==="search"&&!selectedResult)||(addMode==="manual"&&!newLead["Lead Name"]))?"#21262d":"#238636",color:(saving||(addMode==="search"&&!selectedResult)||(addMode==="manual"&&!newLead["Lead Name"]))?"#484f58":"#fff",border:"1px solid #30363d"}}>{saving?"Adding…":"Add as Hot Lead"}</button>
+            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+              {[
+                { key: "Lead Name", placeholder: "John Smith", type: "text" },
+                { key: "Property Address", placeholder: "123 Main St, Miami FL", type: "text" },
+                { key: "Loan Amount", placeholder: "1500000", type: "number" },
+                { key: "Balloon Maturity", placeholder: "", type: "date" },
+                { key: "Lender Name", placeholder: "Wells Fargo", type: "text" },
+              ].map(({ key, placeholder, type }) => (
+                <Field key={key} label={key}>
+                  <input
+                    type={type}
+                    value={(newLead as Record<string, string>)[key] ?? ""}
+                    onChange={(e) => setNewLead((p) => ({ ...p, [key]: e.target.value }))}
+                    style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                    className="w-full rounded px-2 py-1.5 text-sm"
+                    placeholder={placeholder}
+                  />
+                </Field>
+              ))}
+
+              <Field label="Property Type">
+                <select
+                  value={newLead["Property Type"]}
+                  onChange={(e) => setNewLead((p) => ({ ...p, "Property Type": e.target.value }))}
+                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                  className="w-full rounded px-2 py-1.5 text-sm"
+                >
+                  <option value="">â</option>
+                  {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </Field>
+
+              <Field label="Call Summary">
+                <textarea
+                  rows={3}
+                  value={newLead["Call Summary"]}
+                  onChange={(e) => setNewLead((p) => ({ ...p, "Call Summary": e.target.value }))}
+                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
+                  className="w-full rounded px-2 py-1.5 text-sm"
+                  placeholder="What happened on the call?"
+                />
+              </Field>
+
+              <Field label="Next Action">
+                <select
+                  value={newLead["Next Action"]}
+                  onChange={(e) => setNewLead((p) => ({ ...p, "Next Action": e.target.value }))}
+                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                  className="w-full rounded px-2 py-1.5 text-sm"
+                >
+                  {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="flex gap-2 px-5 py-4 border-t" style={{ borderColor: "#30363d" }}>
+              <button
+                onClick={() => setShowNewLead(false)}
+                className="flex-1 py-2 rounded-md text-sm"
+                style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createLead}
+                disabled={saving || !newLead["Lead Name"]}
+                className="flex-1 py-2 rounded-md text-sm font-medium"
+                style={{
+                  background: saving || !newLead["Lead Name"] ? "#21262d" : "#238636",
+                  color: saving || !newLead["Lead Name"] ? "#484f58" : "#fff",
+                  border: "1px solid #30363d",
+                }}
+              >
+                {saving ? "Savingâ¦" : "Add Lead"}
+              </button>
             </div>
           </div>
         </div>

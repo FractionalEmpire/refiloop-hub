@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { fetchInboxSince } from "@/lib/gmail";
 
+export const dynamic = "force-dynamic";
+
 // Called by Vercel cron (*/5 * * * *) and from the hub UI "Sync Inbox" button.
 export async function GET() {
   // Find the timestamp of the newest Gmail-sourced activity to avoid re-processing.

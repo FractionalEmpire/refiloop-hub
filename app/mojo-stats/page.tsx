@@ -663,11 +663,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                       {call.recording_url ? (
                         <div className="min-w-[220px]">
                           <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Mojo audio</a>
-                          <div className="mt-1">
-                            <audio controls preload="none" className="w-full">
-                              <source src={call.recording_url} />
-                            </audio>
-                          </div>
                           <div className="mt-1 text-[11px]" style={{ color: "#484f58" }}>
                             {call.recording_contact_name ?? call.target_name}
                             {call.recording_source_url ? ` | ${call.recording_source_url}` : ""}

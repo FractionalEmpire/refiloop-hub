@@ -1,7 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
-// ââ Types ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Types ------------------------------------------------------------------
 interface Lead {
   id: string;
   fields: {
@@ -22,19 +22,97 @@ interface Lead {
     Email?: string;
     Phone?: string;
     Notes?: string;
+    lead_score?: number;
+    mojo_status?: string;
   };
 }
 
-// ââ Constants ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+interface EnrichPhone {
+  phone: string;
+  source: "idi" | "mojo" | string;
+  verified: boolean;
+  quality_score: number | null;
+  phone_type: string | null;
+  is_primary: boolean;
+  priority: number | null;
+}
+
+interface EnrichEmail {
+  email: string;
+  source: "idi" | "mojo" | string;
+  is_valid: boolean;
+  is_primary: boolean;
+  priority: number | null;
+  email_type: string | null;
+}
+
+interface EnrichLoan {
+  id: number;
+  property_type: string | null;
+  property_subtype: string | null;
+  interest_rate: number | null;
+  interest_rate_type: string | null;
+  ltv: number | null;
+  lender_name: string | null;
+  lender_type: string | null;
+  mortgage_amount: number | null;
+  display_loan_amount: string | null;
+  term: string | null;
+  due_date: string | null;
+  estimated_due_date: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  year_built: number | null;
+  unit_count: number | null;
+  building_sqft: number | null;
+}
+
+interface EnrichData {
+  owner_id: number;
+  owner: {
+    name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    skip_trace_match: boolean | null;
+    outreach_status: string | null;
+  } | null;
+  phones: EnrichPhone[];
+  emails: EnrichEmail[];
+  loans: EnrichLoan[];
+}
+
+interface SearchResult {
+  owner_id: number;
+  name: string;
+  phones: string[];
+  loan: {
+    loan_id: number;
+    capitalize_loan_id: number;
+    property_address: string;
+    property_city: string;
+    property_state: string;
+    property_zip: string;
+    property_type: string;
+    loan_amount: string;
+    loan_amount_num: number | null;
+    lender_name: string;
+    due_date: string;
+    interest_rate: string;
+    lead_score: number;
+  } | null;
+}
+
+// -- Constants --------------------------------------------------------------
 const STATUSES = ["New", "Follow-Up", "Proposal Sent", "Engaged", "Closed Won", "Dead"];
 
-const STATUS_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  New:             { bg: "#0d1117", text: "#58a6ff", border: "#1f6feb" },
-  "Follow-Up":     { bg: "#0d1117", text: "#d29922", border: "#9e6a03" },
-  "Proposal Sent": { bg: "#0d1117", text: "#a371f7", border: "#6e40c9" },
-  Engaged:         { bg: "#0d1117", text: "#3fb950", border: "#238636" },
-  "Closed Won":    { bg: "#0d1117", text: "#3fb950", border: "#238636" },
-  Dead:            { bg: "#0d1117", text: "#484f58", border: "#30363d" },
+const STATUS_COLORS: Record<string, { text: string; border: string }> = {
+  New:             { text: "#58a6ff", border: "#1f6feb" },
+  "Follow-Up":     { text: "#d29922", border: "#9e6a03" },
+  "Proposal Sent": { text: "#a371f7", border: "#6e40c9" },
+  Engaged:         { text: "#3fb950", border: "#238636" },
+  "Closed Won":    { text: "#3fb950", border: "#238636" },
+  Dead:            { text: "#484f58", border: "#30363d" },
 };
 
 const NEXT_ACTIONS = [
@@ -44,10 +122,10 @@ const NEXT_ACTIONS = [
 
 const PROPERTY_TYPES = [
   "Multifamily", "Mixed Use", "Retail", "Office", "Industrial",
-  "Self Storage", "Hotel/Motel", "Land", "Other",
+  "Self Storage", "Hotel/Motel", "Mobile Home Park", "Land", "Other",
 ];
 
-// ââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Helpers ----------------------------------------------------------------
 function daysUntil(dateStr?: string): number | null {
   if (!dateStr) return null;
   const diff = new Date(dateStr).getTime() - Date.now();
@@ -61,9 +139,15 @@ function urgencyColor(days: number | null): string {
   return "#3fb950";
 }
 
-function fmt(n?: number) {
-  if (!n) return "â";
+function fmt(n?: number | null) {
+  if (!n) return "—";
   return "$" + n.toLocaleString();
+}
+
+function fmtPhone(p: string) {
+  const d = p.replace(/\D/g, "");
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return p;
 }
 
 function generateEmailDraft(lead: Lead): string {
@@ -78,32 +162,32 @@ function generateEmailDraft(lead: Lead): string {
   const lender = f["Lender Name"] ?? null;
 
   const maturityLine = maturity
-    ? `I know your balloon note${lender ? ` with ${lender}` : ""} on ${address} is maturing in ${maturity}${amount ? ` â roughly ${amount}` : ""}.`
+    ? `I know your balloon note${lender ? ` with ${lender}` : ""} on ${address} is maturing in ${maturity}${amount ? ` — roughly ${amount}` : ""}.`
     : `I wanted to follow up regarding your property at ${address}.`;
 
-  return `Subject: Re: Refinancing ${address} â Next Steps
+  return `Subject: Re: Refinancing ${address} — Next Steps
 
 Hi ${firstName},
 
 Great speaking with you earlier. ${maturityLine}
 
-My team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30â60 days, so you'd have a commitment well before the maturity date.
+My team specializes in commercial mortgage refinancing for exactly these situations. We work with 50+ lenders and typically close in 30–60 days, so you'd have a commitment well before the maturity date.
 
 Here's what the next step looks like:
-â¢ 15-minute call to review your property's financials
-â¢ We pull competing term sheets (no cost, no obligation)
-â¢ You pick the best rate and we handle the rest
+• 15-minute call to review your property's financials
+• We pull competing term sheets (no cost, no obligation)
+• You pick the best rate and we handle the rest
 
 Are you free for a quick call this week? I can work around your schedule.
 
-Best:
+Best,
 David
 RefiLoop Commercial Mortgage
 NMLS #2510864
 david@refiloop.com`;
 }
 
-// ââ Sub-components âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// -- Sub-components ---------------------------------------------------------
 function StatusBadge({ status }: { status?: string }) {
   const s = status ?? "New";
   const c = STATUS_COLORS[s] ?? STATUS_COLORS["New"];
@@ -120,7 +204,7 @@ function StatusBadge({ status }: { status?: string }) {
 function UrgencyPill({ days }: { days: number | null }) {
   if (days === null) return null;
   const color = urgencyColor(days);
-  const label = days <= 0 ? "MATURED" : days < 30 ? `${days}d ð¥` : `${days}d`;
+  const label = days <= 0 ? "MATURED" : days < 30 ? `${days}d 🔥` : `${days}d`;
   return (
     <span
       className="text-xs px-2 py-0.5 rounded font-mono font-bold"
@@ -131,7 +215,50 @@ function UrgencyPill({ days }: { days: number | null }) {
   );
 }
 
-// ââ Main Component âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs mb-1 font-medium" style={{ color: "#484f58" }}>
+        {label.toUpperCase()}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function SourceBadge({ source, verified }: { source: string; verified?: boolean }) {
+  if (source === "mojo") {
+    return (
+      <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+        style={{ background: "#238636", color: "#3fb950", border: "1px solid #2ea04340" }}>
+        ✓ Called
+      </span>
+    );
+  }
+  if (source === "idi") {
+    return (
+      <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+        style={{ background: "#9e6a0320", color: "#d29922", border: "1px solid #9e6a0340" }}>
+        IDI Trace
+      </span>
+    );
+  }
+  if (verified) {
+    return (
+      <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+        style={{ background: "#1f6feb20", color: "#58a6ff", border: "1px solid #1f6feb40" }}>
+        ✓ Verified
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#21262d", color: "#484f58" }}>
+      {source}
+    </span>
+  );
+}
+
+// -- Main Component ---------------------------------------------------------
 export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -143,9 +270,21 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [copied, setCopied] = useState(false);
   const [showNewLead, setShowNewLead] = useState(false);
   const [callLog, setCallLog] = useState("");
-
-  // edit state for the detail panel
   const [editFields, setEditFields] = useState<Lead["fields"]>({});
+
+  // Supabase enrichment state (lazy-loaded when a lead is opened)
+  const [enrichData, setEnrichData] = useState<EnrichData | null>(null);
+  const [enrichLoading, setEnrichLoading] = useState(false);
+
+  // Search state
+  const [addMode, setAddMode] = useState<"search" | "manual">("search");
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
+  const [pickPhone, setPickPhone] = useState("");
+  const [callNote, setCallNote] = useState("");
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,12 +296,36 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Debounced search
+  useEffect(() => {
+    if (searchQ.length < 2) { setSearchResults([]); return; }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    setSearching(true);
+    searchTimer.current = setTimeout(async () => {
+      const res = await fetch(`/api/hot-leads/search?q=${encodeURIComponent(searchQ)}`);
+      const data = await res.json();
+      setSearchResults(Array.isArray(data) ? data : []);
+      setSearching(false);
+    }, 350);
+  }, [searchQ]);
+
   function openLead(lead: Lead) {
     setSelected(lead);
     setEditFields({ ...lead.fields });
     setEmailBody(generateEmailDraft(lead));
     setTab("details");
     setCallLog("");
+    setEnrichData(null);
+
+    // Fetch enriched Supabase data if there's a phone
+    const phone = lead.fields.Phone;
+    if (phone) {
+      setEnrichLoading(true);
+      fetch(`/api/hot-leads/enrich?phone=${encodeURIComponent(phone)}`)
+        .then((r) => r.json())
+        .then((d) => { setEnrichData(d ?? null); setEnrichLoading(false); })
+        .catch(() => setEnrichLoading(false));
+    }
   }
 
   async function saveFields() {
@@ -184,11 +347,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     if (!selected || !callLog.trim()) return;
     setSaving(true);
     const now = new Date().toISOString().split("T")[0];
-    const updates: Lead["fields"] = {
-      "Call Summary": callLog,
-      "Last Contact": now,
-      ...editFields,
-    };
+    const updates: Lead["fields"] = { "Call Summary": callLog, "Last Contact": now, ...editFields };
     await fetch(`/api/hot-leads/${selected.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -209,25 +368,54 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     setTimeout(() => setCopied(false), 2000);
   }
 
-  const filtered = statusFilter === "all"
-    ? leads
-    : leads.filter((l) => (l.fields.Status ?? "New") === statusFilter);
+  // Add from search result
+  async function addFromSearch() {
+    if (!selectedResult) return;
+    setSaving(true);
+    const loan = selectedResult.loan;
+    const phone = pickPhone || selectedResult.phones[0] || "";
+    const body = {
+      name: selectedResult.name,
+      owner_id: selectedResult.owner_id,
+      loan_id: loan?.loan_id ?? null,
+      capitalize_loan_id: loan?.capitalize_loan_id ?? null,
+      phone,
+      property_address: loan?.property_address ?? "",
+      property_city: loan?.property_city ?? "",
+      property_state: loan?.property_state ?? "",
+      property_zip: loan?.property_zip ?? "",
+      property_type: loan?.property_type ?? "",
+      loan_amount: loan?.loan_amount ?? null,
+      loan_amount_num: loan?.loan_amount_num ?? null,
+      lender_name: loan?.lender_name ?? null,
+      due_date: loan?.due_date ?? null,
+      interest_rate: loan?.interest_rate ?? null,
+      lead_score: loan?.lead_score ?? null,
+      status: "Follow-Up",
+      call_summary: callNote || "Positive response — added manually.",
+      last_contact: new Date().toISOString().split("T")[0],
+      assigned_to: user === "david" ? "David" : "Gorjan",
+      added_by: "manual",
+    };
+    await fetch("/api/hot-leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await load();
+    resetModal();
+  }
 
-  const statusCounts = leads.reduce<Record<string, number>>((acc, l) => {
-    const s = l.fields.Status ?? "New";
-    acc[s] = (acc[s] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  // ââ New Lead Form ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  // Manual new lead (no Supabase match)
   const [newLead, setNewLead] = useState({
     "Lead Name": "", "Property Address": "", "Loan Amount": "",
     "Balloon Maturity": "", "Lender Name": "", "Property Type": "",
     Status: "New", "Call Summary": "", "Next Action": "Callback",
     "Assigned To": user === "david" ? "David" : "Gorjan",
+    Phone: "", Email: "",
   });
 
-  async function createLead() {
+  async function createManualLead() {
     setSaving(true);
     const fields: Record<string, string | number> = {};
     Object.entries(newLead).forEach(([k, v]) => {
@@ -242,46 +430,62 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
       body: JSON.stringify(fields),
     });
     await load();
+    resetModal();
+  }
+
+  function resetModal() {
     setShowNewLead(false);
+    setSearchQ("");
+    setSearchResults([]);
+    setSelectedResult(null);
+    setPickPhone("");
+    setCallNote("");
+    setSaving(false);
     setNewLead({
       "Lead Name": "", "Property Address": "", "Loan Amount": "",
       "Balloon Maturity": "", "Lender Name": "", "Property Type": "",
       Status: "New", "Call Summary": "", "Next Action": "Callback",
       "Assigned To": user === "david" ? "David" : "Gorjan",
+      Phone: "", Email: "",
     });
-    setSaving(false);
   }
 
-  // ââ Render âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+  const filtered = statusFilter === "all"
+    ? leads
+    : leads.filter((l) => (l.fields.Status ?? "New") === statusFilter);
+
+  const statusCounts = leads.reduce<Record<string, number>>((acc, l) => {
+    const s = l.fields.Status ?? "New";
+    acc[s] = (acc[s] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  // -- Render ----------------------------------------------------------------
   return (
     <div className="flex h-full" style={{ color: "#e6edf3" }}>
 
-      {/* ââ Left: Lead List ââ */}
+      {/* Left: Lead List */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b" style={{ borderColor: "#30363d" }}>
           <div className="flex items-center justify-between mb-4">
             <div>
               <h1 className="text-xl font-semibold" style={{ color: "#e6edf3" }}>Hot Leads</h1>
               <p className="text-sm mt-0.5" style={{ color: "#8b949e" }}>
-                {leads.length} leads â¢ {leads.filter(l => {
+                {leads.length} leads · {leads.filter(l => {
                   const d = daysUntil(l.fields["Balloon Maturity"]);
                   return d !== null && d < 90;
                 }).length} maturing within 90 days
               </p>
             </div>
             <button
-              onClick={() => setShowNewLead(true)}
-              className="px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
+              onClick={() => { setAddMode("search"); setShowNewLead(true); }}
+              className="px-3 py-1.5 rounded-md text-sm font-medium"
               style={{ background: "#238636", color: "#fff", border: "1px solid #2ea043" }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = "#2ea043")}
-              onMouseLeave={(e) => (e.currentTarget.style.background = "#238636")}
             >
-              + New Lead
+              + Add Lead
             </button>
           </div>
 
-          {/* Status filter tabs */}
           <div className="flex gap-1 overflow-x-auto pb-1">
             {["all", ...STATUSES].map((s) => {
               const count = s === "all" ? leads.length : (statusCounts[s] ?? 0);
@@ -290,27 +494,26 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 <button
                   key={s}
                   onClick={() => setStatusFilter(s)}
-                  className="shrink-0 px-3 py-1 rounded text-xs transition-colors"
+                  className="shrink-0 px-3 py-1 rounded text-xs"
                   style={{
                     background: active ? "#21262d" : "transparent",
                     color: active ? "#e6edf3" : "#8b949e",
                     border: active ? "1px solid #30363d" : "1px solid transparent",
                   }}
                 >
-                  {s === "all" ? "All" : s} {count > 0 ? <span style={{ color: "#484f58" }}>({count})</span> : null}
+                  {s === "all" ? "All" : s}{count > 0 ? ` (${count})` : ""}
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* Lead cards */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {loading ? (
-            <div className="flex items-center justify-center h-40" style={{ color: "#8b949e" }}>Loadingâ¦</div>
+            <div className="flex items-center justify-center h-40" style={{ color: "#8b949e" }}>Loading…</div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 gap-2" style={{ color: "#8b949e" }}>
-              <span className="text-2xl">ð­</span>
+              <span className="text-2xl">📭</span>
               <span className="text-sm">No leads in this status</span>
             </div>
           ) : (
@@ -322,13 +525,11 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 <div
                   key={lead.id}
                   onClick={() => openLead(lead)}
-                  className="rounded-lg p-4 cursor-pointer transition-colors"
+                  className="rounded-lg p-4 cursor-pointer"
                   style={{
                     background: isActive ? "#21262d" : "#0d1117",
                     border: `1px solid ${isActive ? "#58a6ff40" : "#21262d"}`,
                   }}
-                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.borderColor = "#30363d"; }}
-                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.borderColor = "#21262d"; }}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
@@ -338,24 +539,33 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                         </span>
                         <StatusBadge status={f.Status} />
                         {days !== null && <UrgencyPill days={days} />}
+                        {f.mojo_status && (
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#0d1117", color: "#58a6ff", border: "1px solid #1f6feb" }}>
+                            Mojo: {f.mojo_status}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs mb-1.5" style={{ color: "#8b949e" }}>
-                        ð {f["Property Address"] ?? "â"}
-                        {f["Property Type"] && <span className="ml-2 px-1.5 py-0.5 rounded text-xs" style={{ background: "#21262d", color: "#8b949e" }}>{f["Property Type"]}</span>}
+                        📍 {f["Property Address"] ?? "—"}
+                        {f["Property Type"] && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded text-xs" style={{ background: "#21262d", color: "#8b949e" }}>
+                            {f["Property Type"]}
+                          </span>
+                        )}
                       </div>
                       {f["Call Summary"] && (
                         <div className="text-xs line-clamp-2 mb-1.5" style={{ color: "#8b949e" }}>
-                          ð {f["Call Summary"]}
+                          📞 {f["Call Summary"]}
                         </div>
                       )}
                       <div className="flex items-center gap-3 text-xs" style={{ color: "#484f58" }}>
-                        {f["Loan Amount"] && <span>ð° {fmt(f["Loan Amount"])}</span>}
+                        {f["Loan Amount"] && <span>💰 {fmt(f["Loan Amount"])}</span>}
+                        {f["Lender Name"] && <span>🏦 {f["Lender Name"]}</span>}
                         {f["Next Action"] && (
                           <span className="px-1.5 py-0.5 rounded" style={{ background: "#161b22", color: "#58a6ff" }}>
-                            â {f["Next Action"]}
+                            → {f["Next Action"]}
                           </span>
                         )}
-                        {f["Last Contact"] && <span>ð {f["Last Contact"]}</span>}
                       </div>
                     </div>
                   </div>
@@ -366,13 +576,12 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
         </div>
       </div>
 
-      {/* ââ Right: Detail Panel ââ */}
+      {/* Right: Detail Panel */}
       {selected && (
         <div
           className="flex flex-col border-l overflow-hidden"
           style={{ width: 480, borderColor: "#30363d", background: "#0d1117" }}
         >
-          {/* Panel header */}
           <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#30363d" }}>
             <div>
               <div className="font-semibold text-sm" style={{ color: "#e6edf3" }}>
@@ -382,53 +591,41 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 {selected.fields["Property Address"] ?? ""}
               </div>
             </div>
-            <button
-              onClick={() => setSelected(null)}
-              className="text-lg leading-none"
-              style={{ color: "#484f58" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "#e6edf3")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#484f58")}
-            >
-              Ã
-            </button>
+            <button onClick={() => setSelected(null)} className="text-lg leading-none" style={{ color: "#484f58" }}>×</button>
           </div>
 
-          {/* Tabs */}
           <div className="flex border-b" style={{ borderColor: "#30363d" }}>
             {(["details", "email", "log"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className="flex-1 py-2.5 text-xs font-medium capitalize transition-colors"
+                className="flex-1 py-2.5 text-xs font-medium capitalize"
                 style={{
                   color: tab === t ? "#e6edf3" : "#8b949e",
                   borderBottom: tab === t ? "2px solid #58a6ff" : "2px solid transparent",
                 }}
               >
-                {t === "details" ? "ð Details" : t === "email" ? "âï¸ Email" : "ð Log Call"}
+                {t === "details" ? "📋 Details" : t === "email" ? "✉️ Email" : "📞 Log Call"}
               </button>
             ))}
           </div>
 
-          {/* Panel body */}
           <div className="flex-1 overflow-y-auto">
-
-            {/* ââ Details Tab ââ */}
+            {/* Details Tab */}
             {tab === "details" && (
               <div className="p-5 space-y-4">
-                {/* Quick stats */}
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     { label: "Loan Amount", value: fmt(editFields["Loan Amount"] as number | undefined) },
                     {
                       label: "Matures",
                       value: editFields["Balloon Maturity"]
-                        ? new Date(editFields["Balloon Maturity"]).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                        : "â",
+                        ? new Date(editFields["Balloon Maturity"] as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                        : "—",
                       accent: urgencyColor(daysUntil(editFields["Balloon Maturity"] as string | undefined)),
                     },
-                    { label: "Lender", value: (editFields["Lender Name"] as string) || "â" },
-                    { label: "Assigned To", value: (editFields["Assigned To"] as string) || "â" },
+                    { label: "Lender", value: (editFields["Lender Name"] as string) || "—" },
+                    { label: "Phone", value: (editFields["Phone"] as string) ? fmtPhone(editFields["Phone"] as string) : "—" },
                   ].map(({ label, value, accent }) => (
                     <div key={label} className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                       <div className="text-xs mb-1" style={{ color: "#484f58" }}>{label}</div>
@@ -437,17 +634,93 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                   ))}
                 </div>
 
-                {/* Recommended steps */}
-                {editFields["Recommended Steps"] && (
-                  <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
-                    <div className="text-xs mb-2" style={{ color: "#484f58" }}>RECOMMENDED STEPS</div>
-                    <div className="text-xs whitespace-pre-wrap" style={{ color: "#8b949e" }}>
-                      {editFields["Recommended Steps"] as string}
-                    </div>
+                {/* Supabase Enrichment — Database Info */}
+                {enrichLoading && (
+                  <div className="rounded-md p-3 text-xs" style={{ background: "#161b22", border: "1px solid #21262d", color: "#484f58" }}>
+                    ⟳ Loading database record…
                   </div>
                 )}
 
-                {/* Editable fields */}
+                {enrichData && !enrichLoading && (() => {
+                  const loan = enrichData.loans[0] ?? null;
+                  return (
+                    <div className="rounded-lg overflow-hidden" style={{ border: "1px solid #21262d" }}>
+                      <div className="px-3 py-2 text-xs font-semibold" style={{ background: "#161b22", color: "#484f58", borderBottom: "1px solid #21262d" }}>
+                        DATABASE RECORD{enrichData.loans.length > 1 ? ` (${enrichData.loans.length} loans)` : ""}
+                      </div>
+
+                      {/* Loan data grid */}
+                      {loan && (
+                        <div className="grid grid-cols-2 gap-px" style={{ background: "#21262d" }}>
+                          {[
+                            { label: "Property Type", value: loan.property_type ?? "—" },
+                            { label: "Interest Rate", value: loan.interest_rate != null ? `${Number(loan.interest_rate).toFixed(2)}%` : "—" },
+                            { label: "LTV", value: loan.ltv != null ? `${Number(loan.ltv).toFixed(1)}%` : "—" },
+                            { label: "Rate Type", value: loan.interest_rate_type ?? "—" },
+                            { label: "Lender Type", value: loan.lender_type ?? "—" },
+                            { label: "Term", value: loan.term ?? "—" },
+                            ...(loan.unit_count ? [{ label: "Units", value: String(loan.unit_count) }] : []),
+                            ...(loan.year_built ? [{ label: "Year Built", value: String(loan.year_built) }] : []),
+                          ].map(({ label, value }) => (
+                            <div key={label} className="px-3 py-2" style={{ background: "#0d1117" }}>
+                              <div className="text-xs mb-0.5" style={{ color: "#484f58" }}>{label}</div>
+                              <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{value}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* All Phones */}
+                      {enrichData.phones.length > 0 && (
+                        <div className="p-3" style={{ background: "#0d1117", borderTop: "1px solid #21262d" }}>
+                          <div className="text-xs mb-2" style={{ color: "#484f58" }}>ALL PHONES ON FILE</div>
+                          <div className="space-y-1.5">
+                            {enrichData.phones.map((p, i) => (
+                              <div key={i} className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-mono" style={{ color: "#e6edf3" }}>
+                                  {fmtPhone(p.phone)}
+                                  {p.phone_type && <span className="ml-1.5 text-xs" style={{ color: "#484f58" }}>({p.phone_type})</span>}
+                                  {p.is_primary && <span className="ml-1.5 text-xs" style={{ color: "#58a6ff" }}>★</span>}
+                                </span>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {p.quality_score != null && (
+                                    <span className="text-xs" style={{ color: "#484f58" }}>Q{p.quality_score}</span>
+                                  )}
+                                  <SourceBadge source={p.source} verified={p.verified} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* All Emails */}
+                      {enrichData.emails.length > 0 && (
+                        <div className="p-3" style={{ background: "#0d1117", borderTop: "1px solid #21262d" }}>
+                          <div className="text-xs mb-2" style={{ color: "#484f58" }}>ALL EMAILS ON FILE</div>
+                          <div className="space-y-1.5">
+                            {enrichData.emails.map((e, i) => (
+                              <div key={i} className="flex items-center justify-between gap-2">
+                                <span className="text-xs" style={{ color: "#e6edf3" }}>
+                                  {e.email}
+                                  {e.is_primary && <span className="ml-1.5 text-xs" style={{ color: "#58a6ff" }}>★</span>}
+                                </span>
+                                <SourceBadge source={e.source} verified={e.is_valid} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {enrichData.phones.length === 0 && enrichData.emails.length === 0 && !loan && (
+                        <div className="p-3 text-xs text-center" style={{ background: "#0d1117", color: "#484f58" }}>
+                          Owner found but no contact data on file
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="space-y-3">
                   <Field label="Status">
                     <select
@@ -467,7 +740,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                       style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
                       className="w-full rounded px-2 py-1.5 text-sm"
                     >
-                      <option value="">â</option>
+                      <option value="">—</option>
                       {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
                     </select>
                   </Field>
@@ -489,20 +762,9 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                       style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
                       className="w-full rounded px-2 py-1.5 text-sm"
                     >
-                      <option value="">â</option>
+                      <option value="">—</option>
                       {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
                     </select>
-                  </Field>
-
-                  <Field label="Loan Amount ($)">
-                    <input
-                      type="number"
-                      value={(editFields["Loan Amount"] as number) ?? ""}
-                      onChange={(e) => setEditFields((p) => ({ ...p, "Loan Amount": Number(e.target.value) }))}
-                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
-                      className="w-full rounded px-2 py-1.5 text-sm"
-                      placeholder="e.g. 1500000"
-                    />
                   </Field>
 
                   <Field label="Email">
@@ -516,17 +778,6 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     />
                   </Field>
 
-                  <Field label="Phone">
-                    <input
-                      type="tel"
-                      value={(editFields.Phone as string) ?? ""}
-                      onChange={(e) => setEditFields((p) => ({ ...p, Phone: e.target.value }))}
-                      style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
-                      className="w-full rounded px-2 py-1.5 text-sm"
-                      placeholder="(555) 000-0000"
-                    />
-                  </Field>
-
                   <Field label="Notes">
                     <textarea
                       rows={3}
@@ -534,7 +785,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                       onChange={(e) => setEditFields((p) => ({ ...p, Notes: e.target.value }))}
                       style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
                       className="w-full rounded px-2 py-1.5 text-sm"
-                      placeholder="Free-form notesâ¦"
+                      placeholder="Free-form notes…"
                     />
                   </Field>
                 </div>
@@ -542,91 +793,67 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                 <button
                   onClick={saveFields}
                   disabled={saving}
-                  className="w-full py-2 rounded-md text-sm font-medium transition-colors"
-                  style={{
-                    background: saving ? "#21262d" : "#1f6feb",
-                    color: saving ? "#484f58" : "#fff",
-                    border: "1px solid #30363d",
-                  }}
+                  className="w-full py-2 rounded-md text-sm font-medium"
+                  style={{ background: saving ? "#21262d" : "#1f6feb", color: saving ? "#484f58" : "#fff", border: "1px solid #30363d" }}
                 >
-                  {saving ? "Savingâ¦" : "Save Changes"}
+                  {saving ? "Saving…" : "Save Changes"}
                 </button>
               </div>
             )}
 
-            {/* ââ Email Tab ââ */}
+            {/* Email Tab */}
             {tab === "email" && (
               <div className="p-5 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium" style={{ color: "#484f58" }}>FOLLOW-UP EMAIL DRAFT</span>
                   <button
                     onClick={() => setEmailBody(generateEmailDraft(selected))}
-                    className="text-xs px-2 py-1 rounded transition-colors"
+                    className="text-xs px-2 py-1 rounded"
                     style={{ color: "#8b949e", border: "1px solid #30363d", background: "#161b22" }}
                   >
-                    âº Regenerate
+                    ↺ Regenerate
                   </button>
                 </div>
-
                 <textarea
                   rows={20}
                   value={emailBody}
                   onChange={(e) => setEmailBody(e.target.value)}
                   className="w-full rounded-md p-3 text-xs font-mono"
-                  style={{
-                    background: "#161b22",
-                    color: "#e6edf3",
-                    border: "1px solid #30363d",
-                    resize: "vertical",
-                    lineHeight: 1.6,
-                  }}
+                  style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical", lineHeight: 1.6 }}
                 />
-
                 <div className="flex gap-2">
                   <button
                     onClick={copyEmail}
-                    className="flex-1 py-2 rounded-md text-sm font-medium transition-colors"
-                    style={{
-                      background: copied ? "#238636" : "#1f6feb",
-                      color: "#fff",
-                      border: "1px solid #30363d",
-                    }}
+                    className="flex-1 py-2 rounded-md text-sm font-medium"
+                    style={{ background: copied ? "#238636" : "#1f6feb", color: "#fff", border: "1px solid #30363d" }}
                   >
-                    {copied ? "â Copied!" : "Copy to Clipboard"}
+                    {copied ? "✓ Copied!" : "Copy to Clipboard"}
                   </button>
                   {selected.fields.Email && (
                     <a
                       href={`mailto:${selected.fields.Email}?subject=Refinancing%20${encodeURIComponent(selected.fields["Property Address"] ?? "")}&body=${encodeURIComponent(emailBody)}`}
-                      className="flex-1 py-2 rounded-md text-sm font-medium text-center transition-colors"
+                      className="flex-1 py-2 rounded-md text-sm font-medium text-center"
                       style={{ background: "#161b22", color: "#8b949e", border: "1px solid #30363d" }}
                     >
                       Open in Mail App
                     </a>
                   )}
                 </div>
-
-                <p className="text-xs" style={{ color: "#484f58" }}>
-                  Tip: Edit the draft above before sending. The template pulls from call summary and loan details.
-                </p>
               </div>
             )}
 
-            {/* ââ Log Call Tab ââ */}
+            {/* Log Call Tab */}
             {tab === "log" && (
               <div className="p-5 space-y-4">
-                {/* Previous call summary */}
                 {selected.fields["Call Summary"] && (
                   <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                     <div className="text-xs mb-2" style={{ color: "#484f58" }}>LAST CALL SUMMARY</div>
                     <div className="text-xs" style={{ color: "#8b949e" }}>{selected.fields["Call Summary"]}</div>
                     {selected.fields["Last Contact"] && (
-                      <div className="text-xs mt-2" style={{ color: "#484f58" }}>
-                        ð {selected.fields["Last Contact"]}
-                      </div>
+                      <div className="text-xs mt-2" style={{ color: "#484f58" }}>📅 {selected.fields["Last Contact"]}</div>
                     )}
                   </div>
                 )}
-
                 <Field label="New Call Notes">
                   <textarea
                     rows={6}
@@ -634,10 +861,9 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     onChange={(e) => setCallLog(e.target.value)}
                     style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
                     className="w-full rounded px-2 py-1.5 text-sm"
-                    placeholder="What happened on this call? Tone, objections, interest level, what they saidâ¦"
+                    placeholder="What happened? Tone, objections, interest level…"
                   />
                 </Field>
-
                 <Field label="Update Status">
                   <select
                     value={(editFields.Status as string) ?? "New"}
@@ -648,7 +874,6 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     {STATUSES.map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </Field>
-
                 <Field label="Next Action">
                   <select
                     value={(editFields["Next Action"] as string) ?? ""}
@@ -656,11 +881,10 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     style={{ background: "#161b22", color: "#e6edf3", border: "1px solid #30363d" }}
                     className="w-full rounded px-2 py-1.5 text-sm"
                   >
-                    <option value="">â</option>
+                    <option value="">—</option>
                     {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
                   </select>
                 </Field>
-
                 <Field label="Schedule Callback">
                   <input
                     type="datetime-local"
@@ -670,18 +894,13 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                     className="w-full rounded px-2 py-1.5 text-sm"
                   />
                 </Field>
-
                 <button
                   onClick={logCall}
                   disabled={saving || !callLog.trim()}
-                  className="w-full py-2 rounded-md text-sm font-medium transition-colors"
-                  style={{
-                    background: saving || !callLog.trim() ? "#21262d" : "#238636",
-                    color: saving || !callLog.trim() ? "#484f58" : "#fff",
-                    border: "1px solid #30363d",
-                  }}
+                  className="w-full py-2 rounded-md text-sm font-medium"
+                  style={{ background: saving || !callLog.trim() ? "#21262d" : "#238636", color: saving || !callLog.trim() ? "#484f58" : "#fff", border: "1px solid #30363d" }}
                 >
-                  {saving ? "Savingâ¦" : "Log Call & Save"}
+                  {saving ? "Saving…" : "Log Call & Save"}
                 </button>
               </div>
             )}
@@ -689,111 +908,216 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
         </div>
       )}
 
-      {/* ââ New Lead Modal ââ */}
+      {/* Add Lead Modal */}
       {showNewLead && (
         <div
           className="fixed inset-0 flex items-center justify-center z-50"
-          style={{ background: "rgba(0,0,0,0.7)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowNewLead(false); }}
+          style={{ background: "rgba(0,0,0,0.75)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) resetModal(); }}
         >
           <div
-            className="rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            className="rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
             style={{ background: "#161b22", border: "1px solid #30363d" }}
           >
+            {/* Modal header */}
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#30363d" }}>
               <span className="font-semibold text-sm" style={{ color: "#e6edf3" }}>Add Hot Lead</span>
-              <button onClick={() => setShowNewLead(false)} style={{ color: "#484f58" }}>Ã</button>
+              <button onClick={resetModal} style={{ color: "#484f58" }}>×</button>
             </div>
-            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-              {[
-                { key: "Lead Name", placeholder: "John Smith", type: "text" },
-                { key: "Property Address", placeholder: "123 Main St, Miami FL", type: "text" },
-                { key: "Loan Amount", placeholder: "1500000", type: "number" },
-                { key: "Balloon Maturity", placeholder: "", type: "date" },
-                { key: "Lender Name", placeholder: "Wells Fargo", type: "text" },
-              ].map(({ key, placeholder, type }) => (
-                <Field key={key} label={key}>
+
+            {/* Mode toggle */}
+            <div className="flex border-b" style={{ borderColor: "#30363d" }}>
+              {(["search", "manual"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setAddMode(m)}
+                  className="flex-1 py-2.5 text-xs font-medium"
+                  style={{
+                    color: addMode === m ? "#e6edf3" : "#8b949e",
+                    borderBottom: addMode === m ? "2px solid #58a6ff" : "2px solid transparent",
+                  }}
+                >
+                  {m === "search" ? "🔍 Search Database" : "✏️ Manual Entry"}
+                </button>
+              ))}
+            </div>
+
+            {/* Search mode */}
+            {addMode === "search" && (
+              <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+                <div>
                   <input
-                    type={type}
-                    value={(newLead as Record<string, string>)[key] ?? ""}
-                    onChange={(e) => setNewLead((p) => ({ ...p, [key]: e.target.value }))}
+                    autoFocus
+                    type="text"
+                    value={searchQ}
+                    onChange={(e) => { setSearchQ(e.target.value); setSelectedResult(null); }}
+                    style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                    className="w-full rounded px-3 py-2 text-sm"
+                    placeholder="Search by name or phone number…"
+                  />
+                  {searching && <div className="text-xs mt-1" style={{ color: "#8b949e" }}>Searching…</div>}
+                </div>
+
+                {/* Results */}
+                {searchResults.length > 0 && !selectedResult && (
+                  <div className="space-y-2">
+                    {searchResults.map((r) => (
+                      <div
+                        key={r.owner_id}
+                        onClick={() => { setSelectedResult(r); setPickPhone(r.phones[0] ?? ""); }}
+                        className="rounded-lg p-3 cursor-pointer"
+                        style={{ background: "#0d1117", border: "1px solid #21262d" }}
+                      >
+                        <div className="font-medium text-sm mb-1" style={{ color: "#e6edf3" }}>{r.name}</div>
+                        <div className="text-xs space-y-0.5" style={{ color: "#8b949e" }}>
+                          {r.phones.length > 0 && <div>📞 {r.phones.map(fmtPhone).join(" · ")}</div>}
+                          {r.loan ? (
+                            <>
+                              <div>📍 {r.loan.property_address}, {r.loan.property_city} {r.loan.property_state}</div>
+                              <div>💰 {r.loan.loan_amount} · 🏦 {r.loan.lender_name} · Due {r.loan.due_date?.slice(0, 7)}</div>
+                            </>
+                          ) : (
+                            <div style={{ color: "#484f58" }}>No loan found in database</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {searchQ.length >= 2 && !searching && searchResults.length === 0 && (
+                  <div className="text-sm text-center py-4" style={{ color: "#484f58" }}>
+                    No matches — try manual entry below
+                  </div>
+                )}
+
+                {/* Confirm selected result */}
+                {selectedResult && (
+                  <div className="space-y-3">
+                    <div className="rounded-lg p-3" style={{ background: "#0d1117", border: "1px solid #238636" }}>
+                      <div className="font-semibold text-sm mb-2" style={{ color: "#3fb950" }}>✓ {selectedResult.name}</div>
+                      {selectedResult.loan && (
+                        <div className="text-xs space-y-0.5" style={{ color: "#8b949e" }}>
+                          <div>📍 {selectedResult.loan.property_address}, {selectedResult.loan.property_city} {selectedResult.loan.property_state}</div>
+                          <div>💰 {selectedResult.loan.loan_amount} · 🏦 {selectedResult.loan.lender_name}</div>
+                          <div>📅 Due: {selectedResult.loan.due_date} · Rate: {selectedResult.loan.interest_rate}</div>
+                          <div>🏗 {selectedResult.loan.property_type}</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedResult.phones.length > 1 && (
+                      <Field label="Select Phone">
+                        <select
+                          value={pickPhone}
+                          onChange={(e) => setPickPhone(e.target.value)}
+                          style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                          className="w-full rounded px-2 py-1.5 text-sm"
+                        >
+                          {selectedResult.phones.map((p) => (
+                            <option key={p} value={p}>{fmtPhone(p)}</option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
+
+                    <Field label="Call Note">
+                      <textarea
+                        rows={2}
+                        value={callNote}
+                        onChange={(e) => setCallNote(e.target.value)}
+                        style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
+                        className="w-full rounded px-2 py-1.5 text-sm"
+                        placeholder="Positive response from call, wants to explore options…"
+                      />
+                    </Field>
+
+                    <button onClick={() => setSelectedResult(null)} className="text-xs" style={{ color: "#8b949e" }}>
+                      ← Back to results
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Manual mode */}
+            {addMode === "manual" && (
+              <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+                {[
+                  { key: "Lead Name", placeholder: "John Smith", type: "text" },
+                  { key: "Phone", placeholder: "229-400-8533", type: "tel" },
+                  { key: "Property Address", placeholder: "123 Main St, Iron City GA 39859", type: "text" },
+                  { key: "Loan Amount", placeholder: "806000", type: "number" },
+                  { key: "Balloon Maturity", placeholder: "", type: "date" },
+                  { key: "Lender Name", placeholder: "Peoples South Bank", type: "text" },
+                  { key: "Email", placeholder: "borrower@email.com", type: "email" },
+                ].map(({ key, placeholder, type }) => (
+                  <Field key={key} label={key}>
+                    <input
+                      type={type}
+                      value={(newLead as Record<string, string>)[key] ?? ""}
+                      onChange={(e) => setNewLead((p) => ({ ...p, [key]: e.target.value }))}
+                      style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                      placeholder={placeholder}
+                    />
+                  </Field>
+                ))}
+                <Field label="Property Type">
+                  <select
+                    value={newLead["Property Type"]}
+                    onChange={(e) => setNewLead((p) => ({ ...p, "Property Type": e.target.value }))}
                     style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
                     className="w-full rounded px-2 py-1.5 text-sm"
-                    placeholder={placeholder}
+                  >
+                    <option value="">—</option>
+                    {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
+                  </select>
+                </Field>
+                <Field label="Call Summary">
+                  <textarea
+                    rows={3}
+                    value={newLead["Call Summary"]}
+                    onChange={(e) => setNewLead((p) => ({ ...p, "Call Summary": e.target.value }))}
+                    style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
+                    className="w-full rounded px-2 py-1.5 text-sm"
+                    placeholder="What happened on the call?"
                   />
                 </Field>
-              ))}
+              </div>
+            )}
 
-              <Field label="Property Type">
-                <select
-                  value={newLead["Property Type"]}
-                  onChange={(e) => setNewLead((p) => ({ ...p, "Property Type": e.target.value }))}
-                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
-                  className="w-full rounded px-2 py-1.5 text-sm"
-                >
-                  <option value="">â</option>
-                  {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
-                </select>
-              </Field>
-
-              <Field label="Call Summary">
-                <textarea
-                  rows={3}
-                  value={newLead["Call Summary"]}
-                  onChange={(e) => setNewLead((p) => ({ ...p, "Call Summary": e.target.value }))}
-                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
-                  className="w-full rounded px-2 py-1.5 text-sm"
-                  placeholder="What happened on the call?"
-                />
-              </Field>
-
-              <Field label="Next Action">
-                <select
-                  value={newLead["Next Action"]}
-                  onChange={(e) => setNewLead((p) => ({ ...p, "Next Action": e.target.value }))}
-                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
-                  className="w-full rounded px-2 py-1.5 text-sm"
-                >
-                  {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
-                </select>
-              </Field>
-            </div>
+            {/* Footer */}
             <div className="flex gap-2 px-5 py-4 border-t" style={{ borderColor: "#30363d" }}>
               <button
-                onClick={() => setShowNewLead(false)}
+                onClick={resetModal}
                 className="flex-1 py-2 rounded-md text-sm"
                 style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}
               >
                 Cancel
               </button>
               <button
-                onClick={createLead}
-                disabled={saving || !newLead["Lead Name"]}
+                onClick={addMode === "search" ? addFromSearch : createManualLead}
+                disabled={
+                  saving ||
+                  (addMode === "search" && !selectedResult) ||
+                  (addMode === "manual" && !newLead["Lead Name"])
+                }
                 className="flex-1 py-2 rounded-md text-sm font-medium"
                 style={{
-                  background: saving || !newLead["Lead Name"] ? "#21262d" : "#238636",
-                  color: saving || !newLead["Lead Name"] ? "#484f58" : "#fff",
+                  background: (saving || (addMode === "search" && !selectedResult) || (addMode === "manual" && !newLead["Lead Name"]))
+                    ? "#21262d" : "#238636",
+                  color: (saving || (addMode === "search" && !selectedResult) || (addMode === "manual" && !newLead["Lead Name"]))
+                    ? "#484f58" : "#fff",
                   border: "1px solid #30363d",
                 }}
               >
-                {saving ? "Savingâ¦" : "Add Lead"}
+                {saving ? "Adding…" : "Add as Hot Lead"}
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ââ Helper component âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-xs mb-1 font-medium" style={{ color: "#484f58" }}>
-        {label.toUpperCase()}
-      </label>
-      {children}
     </div>
   );
 }

@@ -313,6 +313,17 @@ function chartRowsFromMap(map: Map<string, number>, palette: string[]): ChartRow
     }));
 }
 
+function chartRowsFromMapByDate(map: Map<string, number>, palette: string[]): ChartRow[] {
+  return Array.from(map.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(0, 10)
+    .map(([label, value], index) => ({
+      label,
+      value,
+      color: palette[index % palette.length],
+    }));
+}
+
 function ChartCard({
   title,
   subtitle,
@@ -379,13 +390,13 @@ function RecentCallsCard({ calls }: { calls: DisplayCall[] }) {
                 <div className="min-w-0">
                   <div className="truncate text-xs font-semibold" style={{ color: "#e6edf3" }}>{call.target_name}</div>
                   <div className="truncate text-[11px]" style={{ color: "#8b949e" }}>
-                    {call.agent_name} · {call.phone_number ?? "Unknown phone"}
+                    {call.agent_name} Â· {call.phone_number ?? "Unknown phone"}
                   </div>
                 </div>
                 <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</span>
               </div>
               <div className="mt-1 text-xs" style={{ color: "#c9d1d9" }}>
-                {formatDisposition(call.disposition)} · {fmtCount(call.total_call_attempts)} attempts
+                {formatDisposition(call.disposition)} Â· {fmtCount(call.total_call_attempts)} attempts
               </div>
             </div>
           ))
@@ -625,7 +636,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     pushOutcomes.set(label, (pushOutcomes.get(label) ?? 0) + 1);
   }
 
-  const callsByDayRows = chartRowsFromMap(callsByDay, ["#1f6feb", "#2ea043", "#d29922", "#a371f7", "#f85149"]);
+  const callsByDayRows = chartRowsFromMapByDate(callsByDay, ["#1f6feb", "#2ea043", "#d29922", "#a371f7", "#f85149"]);
   const callsByDispositionRows = chartRowsFromMap(callsByDisposition, ["#2ea043", "#1f6feb", "#d29922", "#a371f7", "#f85149"]);
   const recordingsByAgentRows = chartRowsFromMap(recordingsByAgent, ["#d29922", "#58a6ff", "#3fb950", "#a371f7", "#f85149"]);
   const pushOutcomeRows = chartRowsFromMap(pushOutcomes, ["#3fb950", "#d29922", "#f85149", "#8b949e", "#58a6ff"]);
@@ -660,8 +671,18 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
               <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Mojo Dashboard</h2>
               <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Compact trend view for calls, recordings, and pushes.</p>
             </div>
-            <div className="rounded-full border px-3 py-1 text-[11px] font-medium" style={{ background: "#0d1117", color: "#8b949e", borderColor: "#30363d" }}>
-              {fmtCount(callsToday.length)} calls today
+            <div className="flex items-center gap-2">
+              <a
+                href="/mojo-stats"
+                className="rounded-md px-3 py-1.5 text-xs font-medium"
+                style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}
+                title="Refresh data"
+              >
+                ↻ Refresh
+              </a>
+              <div className="rounded-full border px-3 py-1 text-[11px] font-medium" style={{ background: "#0d1117", color: "#8b949e", borderColor: "#30363d" }}>
+                {fmtCount(callsToday.length)} calls today
+              </div>
             </div>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
@@ -718,8 +739,8 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                     </div>
                     <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
                       {fmtCount(item.selected_rows)} selected, {fmtCount(item.imported_rows)} imported
-                      {item.list_name ? ` · ${item.list_name}` : ""}
-                      {item.batch_id ? ` · batch ${item.batch_id}` : ""}
+                      {item.list_name ? ` Â· ${item.list_name}` : ""}
+                      {item.batch_id ? ` Â· batch ${item.batch_id}` : ""}
                     </div>
                     <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
                       {note}

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -88,11 +88,18 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
   const [activeFilter, setActiveFilter] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<"list" | "all">("list");
+  const [viewMode, setViewMode] = useState<"list" | "all" | "ask">("list");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     new Set(["Memory", "Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding",
              "Index", "User", "Feedback", "Project", "Reference"])
   );
+
+  // Chat state
+  type ChatMessage = { role: "user" | "assistant"; content: string };
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
   const searchParams = useSearchParams();
   useEffect(() => {
@@ -171,6 +178,71 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
       next.has(tag) ? next.delete(tag) : next.add(tag);
       return next;
     });
+  }
+
+  async function askDocs(question: string) {
+    if (!question.trim() || chatLoading) return;
+    const userMsg: ChatMessage = { role: "user", content: question };
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput("");
+    setChatLoading(true);
+
+    const filter = {
+      group: activeFilter !== "All" ? activeFilter : undefined,
+      tags: activeTags.size > 0 ? Array.from(activeTags) : undefined,
+    };
+
+    let assistantContent = "";
+    setChatMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
+    try {
+      const res = await fetch("/api/docs/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, filter }),
+      });
+
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        setChatMessages((prev) => [
+          ...prev.slice(0, -1),
+          { role: "assistant", content: `Error: ${err.error}` },
+        ]);
+        setChatLoading(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
+              assistantContent += parsed.delta.text;
+              setChatMessages((prev) => [
+                ...prev.slice(0, -1),
+                { role: "assistant", content: assistantContent },
+              ]);
+            }
+          } catch { /* skip non-JSON lines */ }
+        }
+      }
+    } catch (e) {
+      setChatMessages((prev) => [
+        ...prev.slice(0, -1),
+        { role: "assistant", content: `Error: ${e instanceof Error ? e.message : "Unknown error"}` },
+      ]);
+    }
+    setChatLoading(false);
+    setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   }
 
   // All unique tags from static (non-Memory) docs
@@ -275,17 +347,30 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
             <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Docs</h2>
             <p className="text-xs mt-0.5" style={{ color: "#8b949e" }}>refiloop2 · editable</p>
           </div>
-          <button
-            onClick={() => setViewMode(viewMode === "list" ? "all" : "list")}
-            className="px-2 py-1 rounded text-xs"
-            style={{
-              background: viewMode === "all" ? "#1f6feb" : "#21262d",
-              color: viewMode === "all" ? "#fff" : "#8b949e",
-            }}
-            title={viewMode === "list" ? "Show all docs as flat table" : "Show grouped list"}
-          >
-            {viewMode === "list" ? "⊞ All" : "≡ List"}
-          </button>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setViewMode(viewMode === "all" ? "list" : "all")}
+              className="px-2 py-1 rounded text-xs"
+              style={{
+                background: viewMode === "all" ? "#1f6feb" : "#21262d",
+                color: viewMode === "all" ? "#fff" : "#8b949e",
+              }}
+              title="Show all docs as flat table"
+            >
+              ⊞
+            </button>
+            <button
+              onClick={() => setViewMode(viewMode === "ask" ? "list" : "ask")}
+              className="px-2 py-1 rounded text-xs"
+              style={{
+                background: viewMode === "ask" ? "#1f6feb" : "#21262d",
+                color: viewMode === "ask" ? "#fff" : "#8b949e",
+              }}
+              title="Ask questions across docs"
+            >
+              💬
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -552,6 +637,105 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
               </div>
             )}
           </>
+        ) : viewMode === "ask" ? (
+          // Chat panel
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Chat header */}
+            <div className="px-6 py-3 border-b shrink-0 flex items-center gap-3" style={{ background: "#161b22", borderColor: "#30363d" }}>
+              <span className="text-sm font-semibold" style={{ color: "#e6edf3" }}>💬 Ask your docs</span>
+              <span className="text-xs px-2 py-0.5 rounded" style={{ background: "#21262d", color: "#8b949e" }}>
+                {activeFilter === "All" && activeTags.size === 0
+                  ? "All static docs in context"
+                  : activeFilter !== "All"
+                  ? `${activeFilter} docs in context`
+                  : `Filtered by: ${Array.from(activeTags).join(", ")}`}
+              </span>
+              {chatMessages.length > 0 && (
+                <button
+                  onClick={() => setChatMessages([])}
+                  className="text-xs ml-auto"
+                  style={{ color: "#484f58" }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {chatMessages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+                  <p className="text-sm" style={{ color: "#8b949e" }}>Ask anything about your docs</p>
+                  <div className="flex flex-col gap-2 w-full max-w-md">
+                    {[
+                      "How does the daily Mojo push work?",
+                      "What's the process for skip tracing a new lead?",
+                      "How do I get into the VPS?",
+                    ].map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => askDocs(q)}
+                        className="px-4 py-2 rounded-lg text-sm text-left transition-colors"
+                        style={{ background: "#21262d", color: "#c9d1d9", border: "1px solid #30363d" }}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className="max-w-2xl rounded-lg px-4 py-3 text-sm"
+                    style={
+                      msg.role === "user"
+                        ? { background: "#1f6feb", color: "#fff" }
+                        : { background: "#21262d", color: "#e6edf3", border: "1px solid #30363d" }
+                    }
+                  >
+                    {msg.role === "assistant" ? (
+                      <div className="prose prose-invert prose-sm max-w-none">
+                        {msg.content
+                          ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                          : <span style={{ color: "#484f58" }}>▍</span>
+                        }
+                      </div>
+                    ) : (
+                      msg.content
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={chatBottomRef} />
+            </div>
+
+            {/* Input */}
+            <div className="px-6 py-4 border-t shrink-0" style={{ borderColor: "#30363d", background: "#161b22" }}>
+              <form
+                onSubmit={(e) => { e.preventDefault(); askDocs(chatInput); }}
+                className="flex gap-2"
+              >
+                <input
+                  type="text"
+                  placeholder="Ask a question about your docs…"
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  disabled={chatLoading}
+                  className="flex-1 px-4 py-2 rounded-lg text-sm outline-none"
+                  style={{ background: "#21262d", color: "#e6edf3", border: "1px solid #30363d" }}
+                />
+                <button
+                  type="submit"
+                  disabled={chatLoading || !chatInput.trim()}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold"
+                  style={{ background: "#1f6feb", color: "#fff", opacity: (chatLoading || !chatInput.trim()) ? 0.5 : 1 }}
+                >
+                  {chatLoading ? "…" : "Ask"}
+                </button>
+              </form>
+            </div>
+          </div>
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-sm">

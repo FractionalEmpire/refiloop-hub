@@ -57,6 +57,7 @@ type DisplayCall = CallAttempt & {
   outreach_status: string | null;
   total_call_attempts: number | null;
   follow_up_date: string | null;
+  recording_id: number | null;
   recording_contact_name: string | null;
   recording_source_url: string | null;
 };
@@ -262,6 +263,59 @@ function extractAgent(notes: string | null | undefined) {
   return match?.[1]?.trim() || "All Agents";
 }
 
+function normalizeKey(value: string | null | undefined) {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+function buildRecordingMatcher(recordings: MojoRecording[]) {
+  const byCallId = new Map<string, MojoRecording>();
+  const byName = new Map<string, MojoRecording[]>();
+
+  for (const recording of recordings) {
+    if (recording.mojo_call_id) byCallId.set(recording.mojo_call_id, recording);
+
+    const nameKey = normalizeKey(recording.contact_name);
+    if (nameKey) {
+      const existing = byName.get(nameKey) ?? [];
+      existing.push(recording);
+      byName.set(nameKey, existing);
+    }
+  }
+
+  return { byCallId, byName };
+}
+
+function pickRecordingForCall(call: DisplayCall, recordings: ReturnType<typeof buildRecordingMatcher>) {
+  if (call.mojo_call_id) {
+    const exact = recordings.byCallId.get(call.mojo_call_id);
+    if (exact) return exact;
+  }
+
+  const targetKey = normalizeKey(call.target_name);
+  if (targetKey) {
+    const nameMatch = recordings.byName.get(targetKey)?.[0];
+    if (nameMatch) return nameMatch;
+  }
+
+  return null;
+}
+
+function parseDurationSeconds(value: string | null | undefined) {
+  if (!value) return null;
+  const parts = value.split(":").map((part) => Number(part));
+  if (parts.some((part) => !Number.isFinite(part))) return null;
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return null;
+}
+
 function isConnectedCall(call: DisplayCall) {
   const disposition = call.disposition ?? "";
   return Boolean(call.recording_url || call.transcript) || CONNECTED_DISPOSITIONS.includes(disposition);
@@ -286,10 +340,37 @@ function buildDisplayCalls(calls: CallAttempt[], owners: Map<number, Target>, en
         entity?.next_call_date ??
         entity?.parked_until ??
         null,
+      recording_id: null,
       recording_contact_name: null,
       recording_source_url: null,
     };
   });
+}
+
+function buildRecordingDisplayCalls(recordings: MojoRecording[]): DisplayCall[] {
+  return recordings.map((recording) => ({
+    id: -recording.id,
+    owner_id: null,
+    entity_id: null,
+    called_at: recording.called_at ?? "",
+    source: "mojo_recording",
+    mojo_call_id: recording.mojo_call_id,
+    disposition: recording.disposition,
+    phone_number: null,
+    notes: null,
+    recording_url: recording.recording_url,
+    transcript: recording.transcript,
+    call_duration_sec: parseDurationSeconds(recording.duration),
+    agent_name: recording.agent_name ?? "All Agents",
+    target_name: recording.contact_name ?? "Unknown",
+    target_type: "recording",
+    outreach_status: null,
+    total_call_attempts: null,
+    follow_up_date: null,
+    recording_id: recording.id,
+    recording_contact_name: recording.contact_name,
+    recording_source_url: recording.source_url,
+  }));
 }
 
 function unique(values: Array<string | null | undefined>) {
@@ -298,6 +379,10 @@ function unique(values: Array<string | null | undefined>) {
 
 function isNoContact(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase() === "no contact";
+}
+
+function isNoContactCall(call: DisplayCall) {
+  return isNoContact(call.outreach_status) || isNoContact(call.disposition);
 }
 
 function buildSessionSummaries(calls: DisplayCall[]): SessionSummary[] {
@@ -347,20 +432,24 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   ]);
 
   const allCalls = buildDisplayCalls(rawCalls, owners, entities);
-  const recordingByCallId = new Map(recordings.map((recording) => [recording.mojo_call_id, recording]));
-  const calls = allCalls.filter((call) => {
-    if (filters.agent !== "all" && call.agent_name !== filters.agent) return false;
-    if (filters.asset === "connected" && !isConnectedCall(call)) return false;
-    if (isNoContact(call.outreach_status)) return false;
-    return true;
-  }).map((call) => {
-    const recording = call.mojo_call_id ? recordingByCallId.get(call.mojo_call_id) : null;
+  const recordingMatcher = buildRecordingMatcher(recordings);
+  const enrichedCalls = allCalls.map((call) => {
+    const recording = pickRecordingForCall(call, recordingMatcher);
     return {
       ...call,
       recording_url: call.recording_url ?? recording?.recording_url ?? null,
+      recording_id: recording?.id ?? null,
       recording_contact_name: recording?.contact_name ?? null,
       recording_source_url: recording?.source_url ?? null,
     };
+  });
+  const usedRecordingIds = new Set(enrichedCalls.map((call) => call.recording_id).filter(Boolean));
+  const recordingOnlyCalls = buildRecordingDisplayCalls(recordings.filter((recording) => !usedRecordingIds.has(recording.id)));
+  const calls = [...enrichedCalls, ...recordingOnlyCalls].filter((call) => {
+    if (filters.agent !== "all" && call.agent_name !== filters.agent) return false;
+    if (filters.asset === "connected" && !isConnectedCall(call)) return false;
+    if (isNoContactCall(call)) return false;
+    return true;
   });
   const sessions = buildSessionSummaries(calls);
   const agentOptions = unique([
@@ -373,7 +462,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     ...recordings.map((recording) => recording.disposition),
   ]);
   const connectedCalls = calls.filter(isConnectedCall);
-  const recordingCount = calls.filter((call) => call.recording_url).length + recordings.filter((recording) => recording.recording_url).length;
+  const recordingCount = calls.filter((call) => call.recording_url).length;
   const latestSync = syncBatches[0]?.synced_at ?? null;
   const pageSize = 20;
   const currentPage = Math.max(1, Number(filters.page ?? "1") || 1);

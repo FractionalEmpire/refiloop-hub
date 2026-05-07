@@ -262,6 +262,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [activitiesLoading, setActivitiesLoading] = useState(false);
   const [enrichData, setEnrichData] = useState<EnrichData | null>(null);
   const [enrichLoading, setEnrichLoading] = useState(false);
+  const [showPhones, setShowPhones] = useState(false);
 
   // Inbox sync state
   const [syncing, setSyncing] = useState(false);
@@ -710,11 +711,15 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
               {enrichLoading && <div className="text-xs mb-3" style={{color:"#8b949e"}}>Loading database record…</div>}
               {enrichData && !enrichLoading && (() => {
                 const loan = enrichData.loans[0] ?? null;
+                const calledPhones = enrichData.phones.filter(p => p.source === "mojo");
+                const otherPhones = enrichData.phones.filter(p => p.source !== "mojo");
                 return (
                   <div className="mb-4 rounded-lg p-3" style={{background:"#161b22",border:"1px solid #30363d"}}>
                     <div className="text-xs font-semibold mb-3" style={{color:"#8b949e",letterSpacing:"0.08em"}}>
                       DATABASE RECORD{enrichData.loans.length > 1 ? ` (${enrichData.loans.length} loans)` : ""}
                     </div>
+
+                    {/* Loan data grid */}
                     {loan && (
                       <div className="grid grid-cols-2 gap-x-4 gap-y-1 mb-3 text-xs">
                         {loan.property_type&&<div><span style={{color:"#484f58"}}>TYPE </span><span style={{color:"#e6edf3"}}>{loan.property_type}</span></div>}
@@ -727,33 +732,61 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                         {loan.year_built!=null&&<div><span style={{color:"#484f58"}}>BUILT </span><span style={{color:"#e6edf3"}}>{loan.year_built}</span></div>}
                       </div>
                     )}
-                    {enrichData.phones.length>0&&(
-                      <div className="mb-2">
-                        <div className="text-xs mb-1" style={{color:"#484f58"}}>ALL PHONES ON FILE</div>
-                        {enrichData.phones.map((p,i)=>(
+
+                    {/* Emails — always visible */}
+                    {enrichData.emails.length > 0 && (
+                      <div className="mb-3">
+                        <div className="text-xs mb-1 font-medium" style={{color:"#484f58"}}>EMAILS ON FILE</div>
+                        {enrichData.emails.map((e, i) => (
                           <div key={i} className="flex items-center gap-2 mb-0.5">
-                            <span className="text-xs font-mono" style={{color:"#e6edf3"}}>{p.phone}</span>
-                            <SourceBadge source={p.source} verified={p.verified}/>
-                            {p.phone_type&&<span className="text-xs" style={{color:"#8b949e"}}>{p.phone_type}</span>}
+                            <span className="text-xs" style={{color:"#e6edf3"}}>{e.email}</span>
+                            <SourceBadge source={e.source} verified={e.is_valid} />
                           </div>
                         ))}
                       </div>
                     )}
-                    {enrichData.emails.length>0&&(
-                      <div>
-                        <div className="text-xs mb-1" style={{color:"#484f58"}}>ALL EMAILS ON FILE</div>
-                        {enrichData.emails.map((e,i)=>(
+
+                    {/* Called/manually-entered phones — always visible */}
+                    {calledPhones.length > 0 && (
+                      <div className="mb-2">
+                        <div className="text-xs mb-1 font-medium" style={{color:"#484f58"}}>VERIFIED PHONES</div>
+                        {calledPhones.map((p, i) => (
                           <div key={i} className="flex items-center gap-2 mb-0.5">
-                            <span className="text-xs" style={{color:"#e6edf3"}}>{e.email}</span>
-                            <SourceBadge source={e.source} verified={e.is_valid}/>
+                            <span className="text-xs font-mono" style={{color:"#e6edf3"}}>{p.phone}</span>
+                            <SourceBadge source={p.source} verified={p.verified} />
+                            {p.phone_type && <span className="text-xs" style={{color:"#8b949e"}}>{p.phone_type}</span>}
                           </div>
                         ))}
                       </div>
+                    )}
+
+                    {/* All other phones — collapsed by default */}
+                    {otherPhones.length > 0 && (
+                      <div>
+                        <button
+                          className="text-xs mb-1"
+                          style={{color:"#58a6ff",background:"none",border:"none",cursor:"pointer",padding:0}}
+                          onClick={() => setShowPhones(v => !v)}
+                        >
+                          {showPhones ? "▾ Hide" : "▸ Show"} {otherPhones.length} more phone{otherPhones.length !== 1 ? "s" : ""} (IDI trace)
+                        </button>
+                        {showPhones && otherPhones.map((p, i) => (
+                          <div key={i} className="flex items-center gap-2 mb-0.5">
+                            <span className="text-xs font-mono" style={{color:"#8b949e"}}>{p.phone}</span>
+                            <SourceBadge source={p.source} verified={p.verified} />
+                            {p.phone_type && <span className="text-xs" style={{color:"#6e7681"}}>{p.phone_type}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {enrichData.phones.length === 0 && enrichData.emails.length === 0 && !loan && (
+                      <div className="text-xs" style={{color:"#484f58"}}>No database record found.</div>
                     )}
                   </div>
                 );
               })()}
-              {/* Editable Fields */}
+{/* Editable Fields */}
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Status">

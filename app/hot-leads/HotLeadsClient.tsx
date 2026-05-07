@@ -73,6 +73,29 @@ interface EnrichData {
 }
 
 
+
+interface DbSearchResult {
+  owner_id: number;
+  name: string;
+  phones: string[];
+  loan: {
+    loan_id: number;
+    capitalize_loan_id: number;
+    property_address: string;
+    property_city: string;
+    property_state: string;
+    property_zip: string;
+    property_type: string;
+    loan_amount: string | number;
+    loan_amount_num: number | null;
+    lender_name: string;
+    due_date: string;
+    interest_rate: string;
+    lead_score: number;
+  } | null;
+  loans: DbSearchResult["loan"][];
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const STATUSES = ["New", "Follow-Up", "Proposal Sent", "Engaged", "Closed Won", "Dead"];
 
@@ -243,6 +266,10 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [saving, setSaving] = useState(false);
   const [showNewLead, setShowNewLead] = useState(false);
+  const [addMode, setAddMode] = useState<"search" | "manual">("search");
+  const [dbQuery, setDbQuery] = useState("");
+  const [dbResults, setDbResults] = useState<DbSearchResult[]>([]);
+  const [dbSearching, setDbSearching] = useState(false);
 
   // Email compose state
   const [showEmail, setShowEmail] = useState(false);
@@ -458,6 +485,65 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
       Status: "New", "Call Summary": "", "Next Action": "Callback",
       "Assigned To": user === "david" ? "David" : "Gorjan",
     });
+    setSaving(false);
+  }
+
+
+  // Debounced DB search
+  useEffect(() => {
+    if (!showNewLead || addMode !== "search" || dbQuery.length < 2) {
+      setDbResults([]);
+      return;
+    }
+    setDbSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/hot-leads/search?q=${encodeURIComponent(dbQuery)}`);
+        const data = await res.json();
+        setDbResults(Array.isArray(data) ? data : []);
+      } finally {
+        setDbSearching(false);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [dbQuery, addMode, showNewLead]);
+
+  async function addFromSearch(result: DbSearchResult) {
+    setSaving(true);
+    const loan = result.loan;
+    const phone = result.phones[0] ?? null;
+    const row: Record<string, unknown> = {
+      name: result.name,
+      phone,
+      owner_id: result.owner_id,
+      status: "New",
+      next_action: "Callback",
+      assigned_to: user === "david" ? "David" : "Gorjan",
+      last_contact: new Date().toISOString().split("T")[0],
+      added_by: "search",
+    };
+    if (loan) {
+      row.loan_id = loan.loan_id;
+      row.capitalize_loan_id = loan.capitalize_loan_id;
+      row.property_address = loan.property_address;
+      row.property_city = loan.property_city;
+      row.property_state = loan.property_state;
+      row.property_zip = loan.property_zip;
+      row.property_type = loan.property_type;
+      row.loan_amount_num = loan.loan_amount_num;
+      row.loan_amount = loan.loan_amount_num ? `$${Number(loan.loan_amount_num).toLocaleString()}` : null;
+      row.due_date = loan.due_date ?? null;
+      row.lender_name = loan.lender_name ?? null;
+    }
+    await fetch("/api/hot-leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(row),
+    });
+    await load();
+    setShowNewLead(false);
+    setDbQuery("");
+    setDbResults([]);
     setSaving(false);
   }
 
@@ -1115,92 +1201,179 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
       {showNewLead && (
         <div
           className="fixed inset-0 flex items-center justify-center z-50"
-          style={{ background: "rgba(0,0,0,0.7)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowNewLead(false); }}
+          style={{ background: "rgba(0,0,0,0.75)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowNewLead(false); setDbQuery(""); setDbResults([]); } }}
         >
           <div
-            className="rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+            className="rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
             style={{ background: "#161b22", border: "1px solid #30363d" }}
           >
+            {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#30363d" }}>
               <span className="font-semibold text-sm" style={{ color: "#e6edf3" }}>Add Hot Lead</span>
-              <button onClick={() => setShowNewLead(false)} style={{ color: "#484f58" }}>&times;</button>
+              <button onClick={() => { setShowNewLead(false); setDbQuery(""); setDbResults([]); }} style={{ color: "#484f58" }}>&times;</button>
             </div>
-            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-              {[
-                { key: "Lead Name", placeholder: "John Smith", type: "text" },
-                { key: "Property Address", placeholder: "123 Main St, Miami FL", type: "text" },
-                { key: "Loan Amount", placeholder: "1500000", type: "number" },
-                { key: "Balloon Maturity", placeholder: "", type: "date" },
-                { key: "Lender Name", placeholder: "Wells Fargo", type: "text" },
-              ].map(({ key, placeholder, type }) => (
-                <Field key={key} label={key}>
-                  <input
-                    type={type}
-                    value={(newLead as Record<string, string>)[key] ?? ""}
-                    onChange={(e) => setNewLead((p) => ({ ...p, [key]: e.target.value }))}
-                    style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
-                    className="w-full rounded px-2 py-1.5 text-sm"
-                    placeholder={placeholder}
-                  />
-                </Field>
+
+            {/* Mode tabs */}
+            <div className="flex border-b" style={{ borderColor: "#30363d" }}>
+              {(["search", "manual"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setAddMode(m)}
+                  className="flex-1 py-2.5 text-xs font-medium transition-colors"
+                  style={{
+                    color: addMode === m ? "#e6edf3" : "#8b949e",
+                    borderBottom: addMode === m ? "2px solid #58a6ff" : "2px solid transparent",
+                    background: "transparent",
+                  }}
+                >
+                  {m === "search" ? "🔍 Search Our Database" : "✏️ Manual Entry"}
+                </button>
               ))}
+            </div>
 
-              <Field label="Property Type">
-                <select
-                  value={newLead["Property Type"]}
-                  onChange={(e) => setNewLead((p) => ({ ...p, "Property Type": e.target.value }))}
+            {/* Search mode */}
+            {addMode === "search" && (
+              <div className="p-5 space-y-3 max-h-[65vh] overflow-y-auto">
+                <input
+                  autoFocus
+                  type="text"
+                  value={dbQuery}
+                  onChange={(e) => setDbQuery(e.target.value)}
                   style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
-                  className="w-full rounded px-2 py-1.5 text-sm"
-                >
-                  <option value="">—</option>
-                  {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
-                </select>
-              </Field>
-
-              <Field label="Call Summary">
-                <textarea
-                  rows={3}
-                  value={newLead["Call Summary"]}
-                  onChange={(e) => setNewLead((p) => ({ ...p, "Call Summary": e.target.value }))}
-                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
-                  className="w-full rounded px-2 py-1.5 text-sm"
-                  placeholder="What happened on the call?"
+                  className="w-full rounded px-3 py-2 text-sm"
+                  placeholder="Search by name or phone number…"
                 />
-              </Field>
+                {dbSearching && (
+                  <div className="text-center py-4 text-xs" style={{ color: "#484f58" }}>Searching…</div>
+                )}
+                {!dbSearching && dbQuery.length >= 2 && dbResults.length === 0 && (
+                  <div className="text-center py-4 text-xs" style={{ color: "#484f58" }}>
+                    No matches — try manual entry
+                  </div>
+                )}
+                {dbQuery.length < 2 && (
+                  <p className="text-xs text-center" style={{ color: "#484f58" }}>Type at least 2 characters to search</p>
+                )}
+                <div className="space-y-2">
+                  {dbResults.map((r) => {
+                    const loan = r.loan;
+                    const addr = loan
+                      ? [loan.property_address, loan.property_city, loan.property_state].filter(Boolean).join(", ")
+                      : null;
+                    const days = loan?.due_date ? daysUntil(loan.due_date) : null;
+                    return (
+                      <div key={r.owner_id} className="rounded-lg p-3" style={{ background: "#0d1117", border: "1px solid #21262d" }}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium mb-1" style={{ color: "#e6edf3" }}>{r.name}</div>
+                            {r.phones.length > 0 && (
+                              <div className="text-xs mb-1" style={{ color: "#58a6ff" }}>📞 {r.phones.slice(0,2).join(" · ")}</div>
+                            )}
+                            {addr && <div className="text-xs mb-1" style={{ color: "#8b949e" }}>📍 {addr}</div>}
+                            {loan && (
+                              <div className="flex items-center gap-2 flex-wrap mt-1">
+                                {loan.loan_amount_num && (
+                                  <span className="text-xs" style={{ color: "#484f58" }}>💰 ${Number(loan.loan_amount_num).toLocaleString()}</span>
+                                )}
+                                {loan.lender_name && <span className="text-xs" style={{ color: "#484f58" }}>🏦 {loan.lender_name}</span>}
+                                {days !== null && <UrgencyPill days={days} />}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => addFromSearch(r)}
+                            disabled={saving}
+                            className="shrink-0 px-3 py-1.5 rounded text-xs font-medium"
+                            style={{ background: "#238636", color: "#fff", border: "1px solid #2ea043" }}
+                          >
+                            {saving ? "…" : "Add"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
-              <Field label="Next Action">
-                <select
-                  value={newLead["Next Action"]}
-                  onChange={(e) => setNewLead((p) => ({ ...p, "Next Action": e.target.value }))}
-                  style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
-                  className="w-full rounded px-2 py-1.5 text-sm"
-                >
-                  {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
-                </select>
-              </Field>
-            </div>
-            <div className="flex gap-2 px-5 py-4 border-t" style={{ borderColor: "#30363d" }}>
-              <button
-                onClick={() => setShowNewLead(false)}
-                className="flex-1 py-2 rounded-md text-sm"
-                style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={createLead}
-                disabled={saving || !newLead["Lead Name"]}
-                className="flex-1 py-2 rounded-md text-sm font-medium"
-                style={{
-                  background: saving || !newLead["Lead Name"] ? "#21262d" : "#238636",
-                  color: saving || !newLead["Lead Name"] ? "#484f58" : "#fff",
-                  border: "1px solid #30363d",
-                }}
-              >
-                {saving ? "Saving…" : "Add Lead"}
-              </button>
-            </div>
+            {/* Manual mode */}
+            {addMode === "manual" && (
+              <>
+                <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto">
+                  {[
+                    { key: "Lead Name", placeholder: "John Smith", type: "text" },
+                    { key: "Property Address", placeholder: "123 Main St, Miami FL", type: "text" },
+                    { key: "Loan Amount", placeholder: "1500000", type: "number" },
+                    { key: "Balloon Maturity", placeholder: "", type: "date" },
+                    { key: "Lender Name", placeholder: "Wells Fargo", type: "text" },
+                  ].map(({ key, placeholder, type }) => (
+                    <Field key={key} label={key}>
+                      <input
+                        type={type}
+                        value={(newLead as Record<string, string>)[key] ?? ""}
+                        onChange={(e) => setNewLead((p) => ({ ...p, [key]: e.target.value }))}
+                        style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                        className="w-full rounded px-2 py-1.5 text-sm"
+                        placeholder={placeholder}
+                      />
+                    </Field>
+                  ))}
+                  <Field label="Property Type">
+                    <select
+                      value={newLead["Property Type"]}
+                      onChange={(e) => setNewLead((p) => ({ ...p, "Property Type": e.target.value }))}
+                      style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                    >
+                      <option value="">—</option>
+                      {PROPERTY_TYPES.map((t) => <option key={t}>{t}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Call Summary">
+                    <textarea
+                      rows={3}
+                      value={newLead["Call Summary"]}
+                      onChange={(e) => setNewLead((p) => ({ ...p, "Call Summary": e.target.value }))}
+                      style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d", resize: "vertical" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                      placeholder="What happened on the call?"
+                    />
+                  </Field>
+                  <Field label="Next Action">
+                    <select
+                      value={newLead["Next Action"]}
+                      onChange={(e) => setNewLead((p) => ({ ...p, "Next Action": e.target.value }))}
+                      style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}
+                      className="w-full rounded px-2 py-1.5 text-sm"
+                    >
+                      {NEXT_ACTIONS.map((a) => <option key={a}>{a}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <div className="flex gap-2 px-5 py-4 border-t" style={{ borderColor: "#30363d" }}>
+                  <button
+                    onClick={() => setShowNewLead(false)}
+                    className="flex-1 py-2 rounded-md text-sm"
+                    style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={createLead}
+                    disabled={saving || !newLead["Lead Name"]}
+                    className="flex-1 py-2 rounded-md text-sm font-medium"
+                    style={{
+                      background: saving || !newLead["Lead Name"] ? "#21262d" : "#238636",
+                      color: saving || !newLead["Lead Name"] ? "#484f58" : "#fff",
+                      border: "1px solid #30363d",
+                    }}
+                  >
+                    {saving ? "Saving…" : "Add Lead"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

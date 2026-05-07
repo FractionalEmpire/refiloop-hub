@@ -23,6 +23,26 @@ type SyncBatch = {
   message: string | null;
 };
 
+type MojoPushHistoryItem = {
+  id: number;
+  owner_id: number;
+  pushed_at: string;
+  list_name: string | null;
+  source: string | null;
+  batch_id: string | null;
+  selected_rows: number | null;
+  imported_rows: number | null;
+  push_status: string | null;
+  error: string | null;
+  display_name: string | null;
+  row_status: string | null;
+  reason: string | null;
+  phone_count: number | null;
+  email_count: number | null;
+  loan_amount: string | null;
+  maturity_date: string | null;
+};
+
 type CallAttempt = {
   id: number;
   owner_id: number | null;
@@ -188,6 +208,16 @@ async function fetchSyncBatches(): Promise<SyncBatch[]> {
   return (data ?? []) as SyncBatch[];
 }
 
+async function fetchMojoPushHistory(): Promise<MojoPushHistoryItem[]> {
+  const { data, error } = await supabase
+    .from("mojo_push_history")
+    .select("id,owner_id,pushed_at,list_name,source,batch_id,selected_rows,imported_rows,push_status,error,display_name,row_status,reason,phone_count,email_count,loan_amount,maturity_date")
+    .order("pushed_at", { ascending: false })
+    .limit(20);
+  if (error) throw error;
+  return (data ?? []) as MojoPushHistoryItem[];
+}
+
 async function fetchRecordings(filters: ReturnType<typeof normalizeFilters>): Promise<MojoRecording[]> {
   const query = supabase
     .from("mojo_call_recordings")
@@ -256,6 +286,13 @@ function formatDisposition(value: string | null | undefined) {
 
 function statusColor(success: boolean) {
   return success ? "#3fb950" : "#f85149";
+}
+
+function pushStatusColor(status: string | null | undefined) {
+  const value = (status ?? "").trim().toLowerCase();
+  if (value === "error" || value === "failed") return "#f85149";
+  if (value === "skipped" || value === "held") return "#d29922";
+  return "#3fb950";
 }
 
 function extractAgent(notes: string | null | undefined) {
@@ -418,8 +455,9 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
 
   const filters = normalizeFilters(searchParams);
 
-  const [syncBatches, rawCalls, recordings] = await Promise.all([
+  const [syncBatches, pushHistory, rawCalls, recordings] = await Promise.all([
     safe(fetchSyncBatches, []),
+    safe(fetchMojoPushHistory, []),
     safe(() => fetchCalls(filters), []),
     safe(() => fetchRecordings(filters), []),
   ]);
@@ -488,6 +526,45 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Last sync:</span> {latestSync ? fmtDateTime(latestSync) : "No sync logged yet"}.{" "}
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Loaded range:</span> {filters.start} to {filters.end}.
         </div>
+
+        <section className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+          <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
+            <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Mojo Push History</h2>
+            <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Recent push outcomes from Skip Trace. Detailed row-level context lives here now.</p>
+          </div>
+          <div className="divide-y" style={{ borderColor: "#21262d" }}>
+            {pushHistory.length === 0 ? (
+              <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No push history yet.</div>
+            ) : (
+              pushHistory.slice(0, 5).map((item) => {
+                const label = item.display_name ?? `Owner ${item.owner_id}`;
+                const status = item.push_status ?? item.row_status ?? "sent";
+                const note = item.error ?? item.reason ?? "No additional note";
+                return (
+                  <div key={`${item.batch_id ?? "batch"}-${item.id}`} className="px-5 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold" style={{ color: pushStatusColor(status) }}>
+                          {status}
+                        </span>
+                        <span className="text-xs" style={{ color: "#c9d1d9" }}>{label}</span>
+                      </div>
+                      <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(item.pushed_at)}</span>
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
+                      {fmtCount(item.selected_rows)} selected, {fmtCount(item.imported_rows)} imported
+                      {item.list_name ? ` · ${item.list_name}` : ""}
+                      {item.batch_id ? ` · batch ${item.batch_id}` : ""}
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
+                      {note}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
 
         <form className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
           <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>

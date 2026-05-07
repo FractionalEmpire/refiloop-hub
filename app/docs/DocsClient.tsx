@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -8,6 +8,7 @@ type DocMeta = {
   path: string;
   label: string;
   group: string;
+  tags?: string[];
   exists: boolean;
   sha?: string;
 };
@@ -20,6 +21,16 @@ const GROUP_ICONS: Record<string, string> = {
   Onboarding: "👋",
   Requirements: "📋",
   Memory: "🧠",
+};
+
+const GROUP_COLORS: Record<string, string> = {
+  Operations: "#1f6feb",
+  Dialer: "#388bfd",
+  Data: "#3fb950",
+  Infrastructure: "#d29922",
+  Requirements: "#f78166",
+  Onboarding: "#bc8cff",
+  Memory: "#8b949e",
 };
 
 const MEMORY_SUBGROUP_ORDER = ["Index", "User", "Feedback", "Project", "Reference", "Other"];
@@ -44,6 +55,25 @@ function getMemorySubgroup(path: string): string {
 
 const TOP_GROUP_ORDER = ["Memory", "Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding"];
 
+function daysSince(isoDate: string): number {
+  return Math.floor((Date.now() - new Date(isoDate).getTime()) / 86400000);
+}
+
+function stalenessColor(days: number): string {
+  if (days < 30) return "#3fb950";
+  if (days < 90) return "#d29922";
+  return "#f85149";
+}
+
+function stalenessLabel(days: number): string {
+  if (days < 1) return "Updated today";
+  if (days === 1) return "Updated yesterday";
+  if (days < 30) return `Updated ${days}d ago`;
+  if (days < 60) return `Updated ~${Math.round(days / 7)}w ago`;
+  if (days < 365) return `Updated ~${Math.round(days / 30)}mo ago`;
+  return `Updated ~${Math.round(days / 365)}y ago`;
+}
+
 export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -54,7 +84,11 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
   const [loadingDoc, setLoadingDoc] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [lastCommit, setLastCommit] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("All");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"list" | "all">("list");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     new Set(["Memory", "Operations", "Dialer", "Data", "Infrastructure", "Requirements", "Onboarding",
              "Index", "User", "Feedback", "Project", "Reference"])
@@ -75,6 +109,7 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
     setSelectedPath(path);
     setEditing(false);
     setSaveMsg("");
+    setLastCommit(null);
     setLoadingDoc(true);
     const res = await fetch(`/api/docs/content?path=${encodeURIComponent(path)}`);
     if (res.ok) {
@@ -87,6 +122,10 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
       setSha("");
     }
     setLoadingDoc(false);
+    fetch(`/api/docs/last-commit?path=${encodeURIComponent(path)}`)
+      .then((r) => r.json())
+      .then((d) => setLastCommit(d.date ?? null))
+      .catch(() => null);
   }
 
   async function saveDoc() {
@@ -126,30 +165,62 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
     });
   }
 
-  // Available top-level groups that actually have docs
+  function toggleTag(tag: string) {
+    setActiveTags((prev) => {
+      const next = new Set(prev);
+      next.has(tag) ? next.delete(tag) : next.add(tag);
+      return next;
+    });
+  }
+
+  // All unique tags from static (non-Memory) docs
+  const allTags = useMemo(() => {
+    const set = new Set<string>();
+    docs.filter((d) => d.group !== "Memory").forEach((d) => d.tags?.forEach((t) => set.add(t)));
+    return Array.from(set).sort();
+  }, [docs]);
+
+  // Available top-level groups for filter pills
   const presentGroups = TOP_GROUP_ORDER.filter((g) => docs.some((d) => d.group === g));
 
-  // Filter docs by active filter
-  const filteredDocs = activeFilter === "All" ? docs : docs.filter((d) => d.group === activeFilter);
+  // Apply all filters: group pill + search + tags
+  const filteredDocs = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return docs.filter((doc) => {
+      const matchesGroup = activeFilter === "All" || doc.group === activeFilter;
+      const matchesSearch =
+        !q ||
+        doc.label.toLowerCase().includes(q) ||
+        doc.group.toLowerCase().includes(q) ||
+        doc.tags?.some((t) => t.toLowerCase().includes(q)) ||
+        doc.path.toLowerCase().includes(q);
+      const matchesTags =
+        activeTags.size === 0 ||
+        doc.tags?.some((t) => activeTags.has(t));
+      return matchesGroup && matchesSearch && matchesTags;
+    });
+  }, [docs, activeFilter, searchQuery, activeTags]);
 
-  // Group filtered docs
-  const grouped = filteredDocs.reduce((acc, doc) => {
-    if (!acc[doc.group]) acc[doc.group] = [];
-    acc[doc.group].push(doc);
-    return acc;
-  }, {} as Record<string, DocMeta[]>);
+  // Grouped for list view
+  const grouped = useMemo(() =>
+    filteredDocs.reduce((acc, doc) => {
+      if (!acc[doc.group]) acc[doc.group] = [];
+      acc[doc.group].push(doc);
+      return acc;
+    }, {} as Record<string, DocMeta[]>),
+    [filteredDocs]
+  );
 
   const selectedDoc = docs.find((d) => d.path === selectedPath);
+  const isFiltering = searchQuery.trim() !== "" || activeTags.size > 0;
 
   function renderMemoryGroup(memoryDocs: DocMeta[]) {
-    // Sub-group by prefix
     const subgrouped: Record<string, DocMeta[]> = {};
     for (const doc of memoryDocs) {
       const sg = getMemorySubgroup(doc.path);
       if (!subgrouped[sg]) subgrouped[sg] = [];
       subgrouped[sg].push(doc);
     }
-    // Sort Index docs: MEMORY.md first
     if (subgrouped["Index"]) {
       subgrouped["Index"].sort((a, b) => {
         if (a.path.endsWith("MEMORY.md")) return -1;
@@ -157,7 +228,6 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
         return a.label.localeCompare(b.label);
       });
     }
-
     return MEMORY_SUBGROUP_ORDER
       .filter((sg) => subgrouped[sg]?.length)
       .map((sg) => {
@@ -200,17 +270,72 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
       {/* Sidebar */}
       <div className="w-64 shrink-0 border-r flex flex-col" style={{ background: "#161b22", borderColor: "#30363d" }}>
         {/* Header */}
-        <div className="px-4 py-3 border-b" style={{ borderColor: "#30363d" }}>
-          <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Docs</h2>
-          <p className="text-xs mt-0.5" style={{ color: "#8b949e" }}>refiloop2 repo · editable</p>
+        <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: "#30363d" }}>
+          <div>
+            <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Docs</h2>
+            <p className="text-xs mt-0.5" style={{ color: "#8b949e" }}>refiloop2 · editable</p>
+          </div>
+          <button
+            onClick={() => setViewMode(viewMode === "list" ? "all" : "list")}
+            className="px-2 py-1 rounded text-xs"
+            style={{
+              background: viewMode === "all" ? "#1f6feb" : "#21262d",
+              color: viewMode === "all" ? "#fff" : "#8b949e",
+            }}
+            title={viewMode === "list" ? "Show all docs as flat table" : "Show grouped list"}
+          >
+            {viewMode === "list" ? "⊞ All" : "≡ List"}
+          </button>
         </div>
+
+        {/* Search */}
+        <div className="px-3 pt-2 pb-1">
+          <input
+            type="text"
+            placeholder="Search docs…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full px-3 py-1.5 rounded text-xs outline-none"
+            style={{ background: "#21262d", color: "#e6edf3", border: "1px solid #30363d" }}
+          />
+        </div>
+
+        {/* Tag chips — only shown when not filtering by a specific group */}
+        {allTags.length > 0 && (activeFilter === "All" || activeFilter !== "Memory") && (
+          <div className="px-3 pb-2 flex flex-wrap gap-1">
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                onClick={() => toggleTag(tag)}
+                className="px-2 py-0.5 rounded-full text-xs transition-colors"
+                style={{
+                  background: activeTags.has(tag) ? "#1f6feb" : "#21262d",
+                  color: activeTags.has(tag) ? "#fff" : "#8b949e",
+                  border: `1px solid ${activeTags.has(tag) ? "#388bfd" : "#30363d"}`,
+                  fontSize: "10px",
+                }}
+              >
+                {tag}
+              </button>
+            ))}
+            {activeTags.size > 0 && (
+              <button
+                onClick={() => setActiveTags(new Set())}
+                className="px-2 py-0.5 rounded-full text-xs"
+                style={{ color: "#8b949e", fontSize: "10px" }}
+              >
+                ✕ clear
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Filter pills */}
         <div className="px-3 py-2 border-b flex flex-wrap gap-1" style={{ borderColor: "#30363d" }}>
           {["All", ...presentGroups].map((g) => (
             <button
               key={g}
-              onClick={() => setActiveFilter(g)}
+              onClick={() => { setActiveFilter(g); setActiveTags(new Set()); }}
               className="px-2 py-0.5 rounded text-xs transition-colors"
               style={{
                 background: activeFilter === g ? "#1f6feb" : "#21262d",
@@ -223,50 +348,98 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
           ))}
         </div>
 
+        {isFiltering && (
+          <p className="px-4 py-1 text-xs" style={{ color: "#484f58" }}>
+            {filteredDocs.filter((d) => d.exists).length} docs
+          </p>
+        )}
+
         {/* Doc list */}
-        <div className="flex-1 overflow-y-auto py-2">
-          {TOP_GROUP_ORDER.filter((g) => grouped[g]?.length).map((group) => {
-            const groupDocs = grouped[group];
-            const isExpanded = expandedGroups.has(group);
-            const foundCount = groupDocs.filter((d) => d.exists).length;
-
-            return (
-              <div key={group}>
+        <div className="flex-1 overflow-y-auto py-1">
+          {viewMode === "all" ? (
+            // Flat table view
+            <div>
+              {filteredDocs.filter((d) => d.exists).length === 0 && (
+                <p className="px-4 py-3 text-xs" style={{ color: "#484f58" }}>No docs match.</p>
+              )}
+              {filteredDocs.filter((d) => d.exists).map((doc) => (
                 <button
-                  onClick={() => toggleGroup(group)}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-left"
-                  style={{ color: "#8b949e" }}
+                  key={doc.path}
+                  onClick={() => openDoc(doc.path)}
+                  className="w-full text-left px-4 py-2 border-b transition-colors"
+                  style={{
+                    background: selectedPath === doc.path ? "#21262d" : "transparent",
+                    borderColor: "#21262d",
+                  }}
                 >
-                  <span className="text-xs">{GROUP_ICONS[group] || "📁"}</span>
-                  <span className="text-xs font-semibold uppercase tracking-wide flex-1">{group}</span>
-                  <span className="text-xs" style={{ color: "#484f58" }}>{foundCount}/{groupDocs.length}</span>
-                  <span className="text-xs" style={{ color: "#484f58" }}>{isExpanded ? "▾" : "▸"}</span>
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="text-xs shrink-0" style={{ color: "#3fb950" }}>●</span>
+                    <span className="text-xs truncate font-medium" style={{ color: selectedPath === doc.path ? "#e6edf3" : "#c9d1d9" }}>
+                      {doc.label}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 pl-4 flex-wrap">
+                    <span
+                      className="px-1.5 py-0 rounded"
+                      style={{
+                        background: "#21262d",
+                        color: GROUP_COLORS[doc.group] || "#8b949e",
+                        fontSize: "9px",
+                      }}
+                    >
+                      {doc.group}
+                    </span>
+                    {doc.tags?.map((t) => (
+                      <span key={t} style={{ color: "#484f58", fontSize: "9px" }}>{t}</span>
+                    ))}
+                  </div>
                 </button>
+              ))}
+            </div>
+          ) : (
+            // Grouped list view
+            TOP_GROUP_ORDER.filter((g) => grouped[g]?.length).map((group) => {
+              const groupDocs = grouped[group];
+              const isExpanded = expandedGroups.has(group);
+              const foundCount = groupDocs.filter((d) => d.exists).length;
 
-                {isExpanded && (
-                  group === "Memory"
-                    ? renderMemoryGroup(groupDocs)
-                    : groupDocs.map((doc) => (
-                        <button
-                          key={doc.path}
-                          onClick={() => doc.exists && openDoc(doc.path)}
-                          className="w-full text-left pl-8 pr-4 py-2 flex items-center gap-2 transition-colors"
-                          style={{
-                            background: selectedPath === doc.path ? "#21262d" : "transparent",
-                            color: selectedPath === doc.path ? "#e6edf3" : doc.exists ? "#c9d1d9" : "#484f58",
-                            cursor: doc.exists ? "pointer" : "default",
-                          }}
-                        >
-                          <span className="text-xs shrink-0" style={{ color: doc.exists ? "#3fb950" : "#484f58" }}>
-                            {doc.exists ? "●" : "○"}
-                          </span>
-                          <span className="text-xs truncate">{doc.label}</span>
-                        </button>
-                      ))
-                )}
-              </div>
-            );
-          })}
+              return (
+                <div key={group}>
+                  <button
+                    onClick={() => toggleGroup(group)}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-left"
+                    style={{ color: "#8b949e" }}
+                  >
+                    <span className="text-xs">{GROUP_ICONS[group] || "📁"}</span>
+                    <span className="text-xs font-semibold uppercase tracking-wide flex-1">{group}</span>
+                    <span className="text-xs" style={{ color: "#484f58" }}>{foundCount}/{groupDocs.length}</span>
+                    <span className="text-xs" style={{ color: "#484f58" }}>{isExpanded ? "▾" : "▸"}</span>
+                  </button>
+                  {isExpanded && (
+                    group === "Memory"
+                      ? renderMemoryGroup(groupDocs)
+                      : groupDocs.map((doc) => (
+                          <button
+                            key={doc.path}
+                            onClick={() => doc.exists && openDoc(doc.path)}
+                            className="w-full text-left pl-8 pr-4 py-2 flex items-center gap-2 transition-colors"
+                            style={{
+                              background: selectedPath === doc.path ? "#21262d" : "transparent",
+                              color: selectedPath === doc.path ? "#e6edf3" : doc.exists ? "#c9d1d9" : "#484f58",
+                              cursor: doc.exists ? "pointer" : "default",
+                            }}
+                          >
+                            <span className="text-xs shrink-0" style={{ color: doc.exists ? "#3fb950" : "#484f58" }}>
+                              {doc.exists ? "●" : "○"}
+                            </span>
+                            <span className="text-xs truncate">{doc.label}</span>
+                          </button>
+                        ))
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -279,16 +452,30 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
               className="flex items-center justify-between px-6 py-3 border-b shrink-0"
               style={{ background: "#161b22", borderColor: "#30363d" }}
             >
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold" style={{ color: "#e6edf3" }}>{selectedDoc.label}</span>
-                <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#21262d", color: "#8b949e" }}>{selectedPath}</code>
+              <div className="flex items-center gap-3 min-w-0 flex-wrap">
+                <span className="text-xs font-semibold shrink-0" style={{ color: "#e6edf3" }}>{selectedDoc.label}</span>
+                <code className="text-xs px-1.5 py-0.5 rounded shrink-0" style={{ background: "#21262d", color: "#8b949e" }}>{selectedPath}</code>
+                {selectedDoc.tags && selectedDoc.tags.length > 0 && (
+                  <div className="flex gap-1 shrink-0">
+                    {selectedDoc.tags.map((t) => (
+                      <span key={t} className="px-1.5 py-0 rounded-full" style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d", fontSize: "10px" }}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {lastCommit && (
+                  <span className="text-xs shrink-0" style={{ color: stalenessColor(daysSince(lastCommit)) }}>
+                    {stalenessLabel(daysSince(lastCommit))}
+                  </span>
+                )}
                 {saveMsg && (
-                  <span className="text-xs" style={{ color: saveMsg.startsWith("✓") ? "#3fb950" : "#f85149" }}>
+                  <span className="text-xs shrink-0" style={{ color: saveMsg.startsWith("✓") ? "#3fb950" : "#f85149" }}>
                     {saveMsg}
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 {editing ? (
                   <>
                     <button
@@ -371,8 +558,8 @@ export default function DocsClient({ user }: { user: "david" | "gorjan" }) {
               <p className="text-2xl mb-3">📄</p>
               <p className="text-sm font-medium mb-1" style={{ color: "#e6edf3" }}>Select a document</p>
               <p className="text-xs" style={{ color: "#484f58" }}>
-                Docs are read from the <code style={{ color: "#8b949e" }}>refiloop2</code> GitHub repo.
-                Requires <code style={{ color: "#8b949e" }}>GITHUB_TOKEN</code> in Vercel env vars.
+                Search or filter by tag above, then click any doc to open it.
+                Edits save directly to the <code style={{ color: "#8b949e" }}>refiloop2</code> GitHub repo.
               </p>
             </div>
           </div>

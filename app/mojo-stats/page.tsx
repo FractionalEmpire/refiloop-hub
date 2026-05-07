@@ -106,6 +106,13 @@ type MojoRecording = {
   source_url: string | null;
 };
 
+type ChartRow = {
+  label: string;
+  value: number;
+  color: string;
+  note?: string;
+};
+
 const MOJO_SOURCES = ["mojo", "mojo_sheet_push"];
 const CONNECTED_DISPOSITIONS = [
   "Interested - Send Info",
@@ -293,6 +300,99 @@ function pushStatusColor(status: string | null | undefined) {
   if (value === "error" || value === "failed") return "#f85149";
   if (value === "skipped" || value === "held") return "#d29922";
   return "#3fb950";
+}
+
+function chartRowsFromMap(map: Map<string, number>, palette: string[]): ChartRow[] {
+  return Array.from(map.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([label, value], index) => ({
+      label,
+      value,
+      color: palette[index % palette.length],
+    }));
+}
+
+function ChartCard({
+  title,
+  subtitle,
+  rows,
+  emptyText,
+}: {
+  title: string;
+  subtitle: string;
+  rows: ChartRow[];
+  emptyText: string;
+}) {
+  const peak = rows.reduce((max, row) => Math.max(max, row.value), 0);
+
+  return (
+    <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+      <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
+        <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>{title}</h2>
+        <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>{subtitle}</p>
+      </div>
+      <div className="px-5 py-4">
+        {rows.length === 0 ? (
+          <div className="py-8 text-center text-sm" style={{ color: "#484f58" }}>{emptyText}</div>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((row) => {
+              const pct = peak > 0 ? Math.max(6, Math.round((row.value / peak) * 100)) : 0;
+              return (
+                <div key={row.label} className="flex items-center gap-3">
+                  <span className="w-28 shrink-0 truncate text-xs" style={{ color: "#8b949e" }} title={row.label}>
+                    {row.label}
+                  </span>
+                  <div className="h-2 flex-1 overflow-hidden rounded-full" style={{ background: "#21262d" }}>
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: row.color }} />
+                  </div>
+                  <span className="w-12 shrink-0 text-right font-mono text-xs" style={{ color: "#e6edf3" }}>
+                    {row.value.toLocaleString()}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RecentCallsCard({ calls }: { calls: DisplayCall[] }) {
+  const recent = calls.slice(0, 5);
+
+  return (
+    <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+      <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
+        <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Recent Mojo Outcomes</h2>
+        <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Latest reviewable rows pulled into Hub.</p>
+      </div>
+      <div className="divide-y" style={{ borderColor: "#21262d" }}>
+        {recent.length === 0 ? (
+          <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No recent calls for this filter.</div>
+        ) : (
+          recent.map((call) => (
+            <div key={call.id} className="px-5 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold" style={{ color: "#e6edf3" }}>{call.target_name}</div>
+                  <div className="truncate text-[11px]" style={{ color: "#8b949e" }}>
+                    {call.agent_name} · {call.phone_number ?? "Unknown phone"}
+                  </div>
+                </div>
+                <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</span>
+              </div>
+              <div className="mt-1 text-xs" style={{ color: "#c9d1d9" }}>
+                {formatDisposition(call.disposition)} · {fmtCount(call.total_call_attempts)} attempts
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
 }
 
 function extractAgent(notes: string | null | undefined) {
@@ -502,6 +602,33 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const connectedCalls = calls.filter(isConnectedCall);
   const recordingCount = calls.filter((call) => call.recording_url).length;
   const latestSync = syncBatches[0]?.synced_at ?? null;
+  const todayKey = inputDate(new Date());
+  const callsToday = calls.filter((call) => call.called_at.slice(0, 10) === todayKey);
+  const callsByDay = new Map<string, number>();
+  const callsByDisposition = new Map<string, number>();
+  const recordingsByAgent = new Map<string, number>();
+  const pushOutcomes = new Map<string, number>();
+
+  for (const call of calls) {
+    const day = call.called_at.slice(0, 10);
+    callsByDay.set(day, (callsByDay.get(day) ?? 0) + 1);
+    const disposition = formatDisposition(call.disposition);
+    callsByDisposition.set(disposition, (callsByDisposition.get(disposition) ?? 0) + 1);
+    if (call.recording_url) {
+      recordingsByAgent.set(call.agent_name, (recordingsByAgent.get(call.agent_name) ?? 0) + 1);
+    }
+  }
+
+  for (const item of pushHistory) {
+    const status = (item.push_status ?? item.row_status ?? "sent").trim().toLowerCase();
+    const label = status === "sent" ? "sent" : status === "skipped" ? "skipped" : status === "failed" ? "failed" : status;
+    pushOutcomes.set(label, (pushOutcomes.get(label) ?? 0) + 1);
+  }
+
+  const callsByDayRows = chartRowsFromMap(callsByDay, ["#1f6feb", "#2ea043", "#d29922", "#a371f7", "#f85149"]);
+  const callsByDispositionRows = chartRowsFromMap(callsByDisposition, ["#2ea043", "#1f6feb", "#d29922", "#a371f7", "#f85149"]);
+  const recordingsByAgentRows = chartRowsFromMap(recordingsByAgent, ["#d29922", "#58a6ff", "#3fb950", "#a371f7", "#f85149"]);
+  const pushOutcomeRows = chartRowsFromMap(pushOutcomes, ["#3fb950", "#d29922", "#f85149", "#8b949e", "#58a6ff"]);
   const pageSize = 20;
   const currentPage = Math.max(1, Number(filters.page ?? "1") || 1);
   const totalPages = Math.max(1, Math.ceil(calls.length / pageSize));
@@ -526,6 +653,44 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Last sync:</span> {latestSync ? fmtDateTime(latestSync) : "No sync logged yet"}.{" "}
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Loaded range:</span> {filters.start} to {filters.end}.
         </div>
+
+        <section className="mb-6">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Mojo Dashboard</h2>
+              <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Compact trend view for calls, recordings, and pushes.</p>
+            </div>
+            <div className="rounded-full border px-3 py-1 text-[11px] font-medium" style={{ background: "#0d1117", color: "#8b949e", borderColor: "#30363d" }}>
+              {fmtCount(callsToday.length)} calls today
+            </div>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <ChartCard
+              title="Calls by Day"
+              subtitle="Rows currently loaded from Mojo call detail."
+              rows={callsByDayRows}
+              emptyText="No calls found for this range."
+            />
+            <ChartCard
+              title="Call Outcomes"
+              subtitle="Disposition mix across the loaded Mojo rows."
+              rows={callsByDispositionRows}
+              emptyText="No disposition data for this range."
+            />
+            <ChartCard
+              title="Recordings by Agent"
+              subtitle="Only rows with an attached recording URL."
+              rows={recordingsByAgentRows}
+              emptyText="No recordings found for this range."
+            />
+            <ChartCard
+              title="Push Outcomes"
+              subtitle="Latest push history landed from Skip Trace."
+              rows={pushOutcomeRows}
+              emptyText="No push history yet."
+            />
+          </div>
+        </section>
 
         <section className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
           <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>

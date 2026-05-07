@@ -160,6 +160,30 @@ function extractBodyText(payload: Record<string, unknown> | null | undefined): s
       const text = extractBodyText(part as Record<string, unknown>);
       if (text) return text;
     }
+
+export async function fetchEODEmails(sinceMs: number): Promise<InboxMessage[]> {
+  const token = await getAccessToken();
+  const afterSec = Math.floor(sinceMs / 1000);
+  const query = `in:inbox after:${afterSec} (subject:EOD OR subject:"end of day" OR from:gorjan)`;
+  const listRes = await fetch(`${GMAIL_BASE}/messages?q=${encodeURIComponent(query)}&maxResults=20`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!listRes.ok) return [];
+  const listJson = await listRes.json();
+  const messages: Array<{ id: string }> = listJson.messages ?? [];
+  if (!messages.length) return [];
+  const results: InboxMessage[] = [];
+  await Promise.all(messages.map(async ({ id }) => {
+    const msgRes = await fetch(`${GMAIL_BASE}/messages/${id}?format=full`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!msgRes.ok) return;
+    const msg = await msgRes.json();
+    const headers: Array<{ name: string; value: string }> = msg.payload?.headers ?? [];
+    const get = (name: string) => headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+    const fromRaw = get("From");
+    const fromEmail = (fromRaw.match(/<([^>]+)>/) ?? [, fromRaw])[1] ?? fromRaw;
+    const fromName = fromRaw.replace(/<[^>]+>/, "").trim().replace(/^"|"$/g, "");
+    results.push({ messageId: id as string, threadId: msg.threadId as string, fromEmail: (fromEmail as string).toLowerCase(), fromName, subject: get("Subject"), snippet: msg.snippet ?? "", bodyText: extractBodyText(msg.payload), date: new Date(parseInt(msg.internalDate as string)).toISOString() });
+  }));
+  return results;
+}
   }
   return "";
 }

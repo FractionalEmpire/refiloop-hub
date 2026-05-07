@@ -35,4 +35,13 @@ export type EODUpdate = {
   task_ids_completed: string[] | null;
   created_at: string;
   date: string;
+  // Email-parsed fields (null for manual posts)
+  email_message_id: string | null;
+  raw_email_body: string | null;
+  live_and_running: string | null;
+  built_not_deployed: string | null;
+  broken: string | null;
+  next_steps: string | null;
+  needs_from_david: string | null;
+  clarifying_questions: Array<{ section: string; question: string }> | null;
 };

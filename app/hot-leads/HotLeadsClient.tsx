@@ -373,6 +373,9 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
       const loans = Array.isArray(data) ? data : [];
       setLoanStack(loans);
       setExpandedLoanIds(new Set(loans.map((l: HotLoanRecord) => l.id as number)));
+      // Auto-sync Loan Amount with stack total
+      const stackTotal = loans.reduce((s: number, l: HotLoanRecord) => s + Number(l.loan_amount ?? 0), 0);
+      if (stackTotal > 0) setEditFields(prev => ({ ...prev, "Loan Amount": stackTotal }));
     } finally {
       setLoansLoading(false);
     }

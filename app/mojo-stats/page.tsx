@@ -315,7 +315,7 @@ function chartRowsFromMap(map: Map<string, number>, palette: string[]): ChartRow
 
 function chartRowsFromMapByDate(map: Map<string, number>, palette: string[]): ChartRow[] {
   return Array.from(map.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
+    .sort((a, b) => b[0].localeCompare(a[0]))
     .slice(0, 10)
     .map(([label, value], index) => ({
       label,

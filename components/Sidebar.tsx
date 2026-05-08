@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const NAV = [
+  { href: "/mojo-stats", label: "Mojo Stats", icon: "M" },
   { href: "/dashboard", label: "Dashboard", icon: "⊞" },
   { href: "/hot-leads", label: "Hot Leads", icon: "🔥" },
   { href: "/tasks", label: "Tasks", icon: "✓" },

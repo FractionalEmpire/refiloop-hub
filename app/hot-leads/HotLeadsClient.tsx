@@ -326,6 +326,10 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
   const [loanForm, setLoanForm] = useState<Partial<HotLoanRecord>>({
     position: 1, lien_label: "1st Lien", loan_type: "Conventional",
   });
+  const [expandedLoanIds, setExpandedLoanIds] = useState<Set<number>>(new Set());
+  const [unitOverride, setUnitOverride] = useState<number | null>(null);
+  const [editingUnits, setEditingUnits] = useState(false);
+  const [unitDraft, setUnitDraft] = useState<string>("");
 
   // Inbox sync state
   const [syncing, setSyncing] = useState(false);
@@ -366,10 +370,21 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     try {
       const res = await fetch(`/api/hot-leads/${leadId}/loans`);
       const data = await res.json();
-      setLoanStack(Array.isArray(data) ? data : []);
+      const loans = Array.isArray(data) ? data : [];
+      setLoanStack(loans);
+      setExpandedLoanIds(new Set(loans.map((l: HotLoanRecord) => l.id as number)));
     } finally {
       setLoansLoading(false);
     }
+  }
+
+  async function fetchOverrides(leadId: string) {
+    try {
+      const res = await fetch(`/api/hot-leads/${leadId}/overrides`);
+      const data = await res.json();
+      setUnitOverride(data?.unit_count ?? null);
+      setUnitDraft(String(data?.unit_count ?? ""));
+    } catch { /* ignore */ }
   }
 
   async function saveLoan() {
@@ -428,6 +443,7 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
     }
     fetchActivities(lead.id, lead);
     fetchLoans(lead.id);
+    fetchOverrides(lead.id);
     setShowAddLoan(false);
     setEditingLoanId(null);
     setLoanForm({ position: 1, lien_label: "1st Lien", loan_type: "Conventional" });
@@ -807,15 +823,34 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                   <div className="text-xs mb-1" style={{ color: "#484f58" }}>LOAN AMOUNT</div>
-                  <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>{fmt(editFields["Loan Amount"] as number | undefined)}</div>
+                  {(() => {
+                    const stackTotal = loanStack.reduce((s, l) => s + Number(l.loan_amount ?? 0), 0);
+                    const display = stackTotal > 0 ? stackTotal : (editFields["Loan Amount"] as number | undefined);
+                    const isStack = stackTotal > 0 && loanStack.length > 1;
+                    return (
+                      <div className="text-sm font-medium" style={{ color: "#e6edf3" }}>
+                        {fmt(display)}{isStack && <span className="ml-1 text-xs" style={{color:"#484f58"}}>total</span>}
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
-                  <div className="text-xs mb-1" style={{ color: "#484f58" }}>MATURES</div>
-                  <div className="text-sm font-medium" style={{ color: urgencyColor(daysUntil(editFields["Balloon Maturity"] as string | undefined)) }}>
-                    {editFields["Balloon Maturity"]
-                      ? new Date(editFields["Balloon Maturity"] as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                      : "—"}
-                  </div>
+                  {(() => {
+                    const withDates = loanStack.filter(l => l.due_date).sort((a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime());
+                    const soonest = withDates[0];
+                    const dateStr = soonest?.due_date ?? (editFields["Balloon Maturity"] as string | undefined);
+                    const days = daysUntil(dateStr);
+                    return (
+                      <>
+                        <div className="text-xs mb-1" style={{ color: "#484f58" }}>
+                          MATURES{soonest && loanStack.length > 1 ? <span style={{fontWeight:400}}> (soonest)</span> : ""}
+                        </div>
+                        <div className="text-sm font-medium" style={{ color: urgencyColor(days) }}>
+                          {dateStr ? new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
                 <div className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
                   <div className="text-xs mb-1" style={{ color: "#484f58" }}>LENDER</div>
@@ -851,62 +886,88 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {loanStack.map((loan) => {
-                      const days = loan.due_date ? daysUntil(loan.due_date) : null;
+                    {/* Stack summary bar */}
+                    {(() => {
+                      const withAmts = loanStack.filter(l => l.loan_amount);
+                      const totalAmt = withAmts.reduce((s, l) => s + Number(l.loan_amount ?? 0), 0);
+                      const withRates = loanStack.filter(l => l.loan_amount && l.interest_rate);
+                      const weightedInt = withRates.reduce((s, l) => s + Number(l.loan_amount ?? 0) * Number(l.interest_rate ?? 0), 0);
+                      const blended = withRates.length > 0 && totalAmt > 0 ? (weightedInt / totalAmt).toFixed(2) : null;
+                      const withDates = loanStack.filter(l => l.due_date).sort((a,b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime());
+                      const soonest = withDates[0];
+                      const soonestDays = soonest ? daysUntil(soonest.due_date) : null;
                       return (
-                        <div key={loan.id} className="rounded-md p-3" style={{ background: "#161b22", border: "1px solid #21262d" }}>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <span className="text-xs font-semibold" style={{ color: "#e6edf3" }}>
-                                  {loan.lien_label || `Position ${loan.position}`}
-                                </span>
-                                {loan.loan_type && (
-                                  <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#21262d", color: "#8b949e" }}>{loan.loan_type}</span>
-                                )}
-                                {days !== null && <UrgencyPill days={days} />}
-                              </div>
-                              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs" style={{ color: "#8b949e" }}>
-                                {loan.lender_name && <span>🏦 {loan.lender_name}</span>}
-                                {loan.loan_amount && <span>💰 {fmt(loan.loan_amount)}</span>}
-                                {loan.interest_rate && <span>📈 {fmtRate(loan.interest_rate)}</span>}
-                                {loan.due_date && <span>📅 {new Date(loan.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>}
-                              </div>
-                              {loan.notes && <div className="text-xs mt-1" style={{ color: "#484f58" }}>{loan.notes}</div>}
-                            </div>
-                            <div className="flex gap-1 shrink-0">
-                              <button
-                                onClick={() => { setEditingLoanId(loan.id); setLoanForm({ ...loan }); setShowAddLoan(true); }}
-                                className="text-xs px-2 py-1 rounded"
-                                style={{ color: "#8b949e", border: "1px solid #30363d", background: "#0d1117" }}
-                              >
-                                ✏️
-                              </button>
-                              <button
-                                onClick={() => deleteLoan(loan.id)}
-                                className="text-xs px-2 py-1 rounded"
-                                style={{ color: "#f85149", border: "1px solid #30363d", background: "#0d1117" }}
-                              >
-                                ✕
-                              </button>
-                            </div>
+                        <div className="rounded-md p-3 mb-1" style={{ background: "#161b22", border: "1px solid #30363d" }}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-semibold" style={{ color: "#e6edf3" }}>{fmt(totalAmt)}</span>
+                            {blended && <span className="text-xs" style={{ color: "#d29922" }}>⚖ {blended}% blended</span>}
+                          </div>
+                          <div className="flex items-center gap-3 text-xs" style={{ color: "#8b949e" }}>
+                            <span>{loanStack.length} lien{loanStack.length !== 1 ? "s" : ""}</span>
+                            {soonest && (
+                              <span style={{ color: urgencyColor(soonestDays) }}>
+                                📅 {soonest.lien_label ?? `#${soonest.position}`} due {new Date(soonest.due_date!).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                {soonestDays !== null && ` (${soonestDays}d)`}
+                              </span>
+                            )}
                           </div>
                         </div>
                       );
-                    })}
-                    {/* Blended rate summary */}
-                    {loanStack.filter(l => l.loan_amount && l.interest_rate).length > 1 && (() => {
-                      const withRates = loanStack.filter(l => l.loan_amount && l.interest_rate);
-                      const totalAmt = withRates.reduce((s, l) => s + (l.loan_amount ?? 0), 0);
-                      const weightedInt = withRates.reduce((s, l) => s + (l.loan_amount ?? 0) * (l.interest_rate ?? 0), 0);
-                      const blended = totalAmt > 0 ? (weightedInt / totalAmt).toFixed(2) : null;
-                      return blended ? (
-                        <div className="rounded-md p-2 flex justify-between text-xs" style={{ background: "#0d1117", border: "1px solid #30363d" }}>
-                          <span style={{ color: "#484f58" }}>Total stack: {fmt(totalAmt)}</span>
-                          <span style={{ color: "#d29922" }}>Blended rate: {blended}%</span>
-                        </div>
-                      ) : null;
                     })()}
+                    {loanStack.map((loan) => {
+                      const days = loan.due_date ? daysUntil(loan.due_date) : null;
+                      const isExpanded = expandedLoanIds.has(loan.id);
+                      const toggle = () => setExpandedLoanIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(loan.id)) next.delete(loan.id); else next.add(loan.id);
+                        return next;
+                      });
+                      return (
+                        <div key={loan.id} className="rounded-md" style={{ background: "#161b22", border: "1px solid #21262d" }}>
+                          {/* Always-visible header row */}
+                          <div className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer" onClick={toggle}>
+                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                              <span className="text-xs" style={{ color: "#484f58" }}>{isExpanded ? "▼" : "▶"}</span>
+                              <span className="text-xs font-semibold" style={{ color: "#e6edf3" }}>
+                                {loan.lien_label || `Position ${loan.position}`}
+                              </span>
+                              {loan.loan_type && (
+                                <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#21262d", color: "#8b949e" }}>{loan.loan_type}</span>
+                              )}
+                              {days !== null && <UrgencyPill days={days} />}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-xs font-medium" style={{ color: "#e6edf3" }}>{loan.loan_amount ? fmt(Number(loan.loan_amount)) : ""}</span>
+                              {loan.interest_rate && <span className="text-xs" style={{ color: "#d29922" }}>{fmtRate(loan.interest_rate)}</span>}
+                            </div>
+                          </div>
+                          {/* Expanded detail */}
+                          {isExpanded && (
+                            <div className="px-3 pb-3 border-t" style={{ borderColor: "#21262d" }}>
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs mt-2" style={{ color: "#8b949e" }}>
+                                {loan.lender_name && <span>🏦 {loan.lender_name}</span>}
+                                {loan.loan_amount && <span>💰 {fmt(Number(loan.loan_amount))}</span>}
+                                {loan.interest_rate && <span>📈 {fmtRate(loan.interest_rate)}</span>}
+                                {loan.due_date && <span>📅 {new Date(loan.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>}
+                              </div>
+                              {loan.notes && <div className="text-xs mt-2 leading-relaxed" style={{ color: "#484f58" }}>{loan.notes}</div>}
+                              <div className="flex gap-1 mt-2">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setEditingLoanId(loan.id); setLoanForm({ ...loan }); setShowAddLoan(true); }}
+                                  className="text-xs px-2 py-1 rounded"
+                                  style={{ color: "#8b949e", border: "1px solid #30363d", background: "#0d1117" }}
+                                >✏️ Edit</button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); deleteLoan(loan.id); }}
+                                  className="text-xs px-2 py-1 rounded"
+                                  style={{ color: "#f85149", border: "1px solid #30363d", background: "#0d1117" }}
+                                >✕ Delete</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {/* Add / Edit loan form */}
@@ -1092,7 +1153,38 @@ export default function HotLeadsClient({ user }: { user: "david" | "gorjan" }) {
                         {loan.interest_rate_type&&<div><span style={{color:"#484f58"}}>RATE TYPE </span><span style={{color:"#e6edf3"}}>{loan.interest_rate_type}</span></div>}
                         {loan.lender_type&&<div><span style={{color:"#484f58"}}>LENDER TYPE </span><span style={{color:"#e6edf3"}}>{loan.lender_type}</span></div>}
                         {loan.term&&<div><span style={{color:"#484f58"}}>TERM </span><span style={{color:"#e6edf3"}}>{loan.term}</span></div>}
-                        {loan.unit_count!=null&&<div><span style={{color:"#484f58"}}>UNITS </span><span style={{color:"#e6edf3"}}>{loan.unit_count}</span></div>}
+                        {(loan.unit_count!=null||unitOverride!=null)&&(
+                          <div className="flex items-center gap-2">
+                            <span style={{color:"#484f58"}}>UNITS </span>
+                            {editingUnits ? (
+                              <>
+                                <input
+                                  type="number"
+                                  value={unitDraft}
+                                  onChange={e => setUnitDraft(e.target.value)}
+                                  className="text-xs rounded px-1"
+                                  style={{width:60,background:"#0d1117",border:"1px solid #30363d",color:"#e6edf3"}}
+                                  autoFocus
+                                />
+                                <button className="text-xs" style={{color:"#3fb950"}} onClick={async()=>{
+                                  if(!selected)return;
+                                  const v=parseInt(unitDraft);
+                                  if(!isNaN(v)){
+                                    await fetch(`/api/hot-leads/${selected.id}/overrides`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({unit_count:v})});
+                                    setUnitOverride(v);
+                                  }
+                                  setEditingUnits(false);
+                                }}>✓</button>
+                                <button className="text-xs" style={{color:"#f85149"}} onClick={()=>setEditingUnits(false)}>✕</button>
+                              </>
+                            ) : (
+                              <>
+                                <span style={{color:"#e6edf3"}}>{unitOverride ?? loan.unit_count}</span>
+                                <button className="text-xs" style={{color:"#484f58"}} onClick={()=>{setUnitDraft(String(unitOverride??loan.unit_count??""));setEditingUnits(true);}}>✏️</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                         {loan.year_built!=null&&<div><span style={{color:"#484f58"}}>BUILT </span><span style={{color:"#e6edf3"}}>{loan.year_built}</span></div>}
                       </div>
                     )}

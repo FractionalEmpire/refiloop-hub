@@ -1,3 +1,4 @@
+// hot-leads API — Supabase
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 

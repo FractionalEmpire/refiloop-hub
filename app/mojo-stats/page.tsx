@@ -1,4 +1,3 @@
-import AppShell from "@/components/AppShell";
 import { getCurrentUser } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { redirect } from "next/navigation";
@@ -41,6 +40,23 @@ type MojoPushHistoryItem = {
   email_count: number | null;
   loan_amount: string | null;
   maturity_date: string | null;
+};
+
+type MojoPushBatch = {
+  key: string;
+  pushed_at: string;
+  list_name: string | null;
+  batch_id: string | null;
+  status: string;
+  selected_rows: number;
+  sent_rows: number;
+  imported_rows: number;
+  duplicate_rows: number;
+  visible_rows: number;
+  skipped_rows: number;
+  failed_rows: number;
+  names: string[];
+  note: string;
 };
 
 type CallAttempt = {
@@ -113,7 +129,7 @@ type ChartRow = {
   note?: string;
 };
 
-const MOJO_SOURCES = ["mojo", "mojo_sheet_push"];
+const MOJO_SOURCES = ["mojo", "mojo_sheet_push", "batch_dialer_push"];
 const CONNECTED_DISPOSITIONS = [
   "Interested - Send Info",
   "Callback Requested",
@@ -150,8 +166,32 @@ function defaultStartDate() {
   return inputDate(date);
 }
 
-function normalizeFilters(params: SearchParams) {
-  const end = params.end || inputDate(new Date());
+async function fetchLatestCallDate() {
+  const [latestCall, latestRecording] = await Promise.all([
+    supabase
+      .from("call_attempts")
+      .select("called_at")
+      .in("source", MOJO_SOURCES)
+      .order("called_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("mojo_call_recordings")
+      .select("called_at")
+      .order("called_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  const candidates = [latestCall.data?.called_at, latestRecording.data?.called_at]
+    .filter(Boolean)
+    .map((value) => String(value));
+  if (candidates.length === 0) return null;
+  return candidates.sort((a, b) => b.localeCompare(a))[0].slice(0, 10);
+}
+
+function normalizeFilters(params: SearchParams, latestDate: string | null) {
+  const end = params.end || latestDate || inputDate(new Date());
   return {
     start: params.start || defaultStartDate(),
     end,
@@ -220,7 +260,7 @@ async function fetchMojoPushHistory(): Promise<MojoPushHistoryItem[]> {
     .from("mojo_push_history")
     .select("id,owner_id,pushed_at,list_name,source,batch_id,selected_rows,imported_rows,push_status,error,display_name,row_status,reason,phone_count,email_count,loan_amount,maturity_date")
     .order("pushed_at", { ascending: false })
-    .limit(20);
+    .limit(500);
   if (error) throw error;
   return (data ?? []) as MojoPushHistoryItem[];
 }
@@ -302,10 +342,83 @@ function pushStatusColor(status: string | null | undefined) {
   return "#3fb950";
 }
 
+function pushBatchKey(item: MojoPushHistoryItem) {
+  return item.batch_id ?? `${item.list_name ?? "unknown-list"}:${item.pushed_at}`;
+}
+
+function buildMojoPushBatches(items: MojoPushHistoryItem[]): MojoPushBatch[] {
+  const sorted = [...items].sort((a, b) => a.pushed_at.localeCompare(b.pushed_at));
+  const seenByList = new Map<string, Set<number>>();
+  const grouped = new Map<string, { items: MojoPushHistoryItem[]; duplicateOwnerIds: Set<number> }>();
+
+  for (const item of sorted) {
+    const key = pushBatchKey(item);
+    const group = grouped.get(key) ?? { items: [], duplicateOwnerIds: new Set<number>() };
+    const listKey = item.list_name ?? item.pushed_at.slice(0, 10);
+    const seen = seenByList.get(listKey) ?? new Set<number>();
+    if (item.owner_id && seen.has(item.owner_id)) group.duplicateOwnerIds.add(item.owner_id);
+    group.items.push(item);
+    grouped.set(key, group);
+    if (item.owner_id && (item.row_status ?? item.push_status ?? "").toLowerCase() === "sent") {
+      seen.add(item.owner_id);
+    }
+    seenByList.set(listKey, seen);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([key, group]) => {
+      const rows = group.items;
+      const latest = rows.reduce((winner, row) => (row.pushed_at > winner.pushed_at ? row : winner), rows[0]);
+      const selected = Number(latest.selected_rows ?? rows.length);
+      const imported = Number(latest.imported_rows ?? selected);
+      const sentRows = rows.filter((row) => (row.row_status ?? row.push_status ?? "").toLowerCase() === "sent").length;
+      const skippedRows = rows.filter((row) => (row.row_status ?? row.push_status ?? "").toLowerCase() === "skipped").length;
+      const failedRows = rows.filter((row) => ["failed", "error"].includes((row.row_status ?? row.push_status ?? "").toLowerCase())).length;
+      const duplicateRows = group.duplicateOwnerIds.size;
+      const visibleRows = Math.max(0, sentRows - duplicateRows);
+      const status = failedRows > 0 ? "failed" : skippedRows > 0 ? "partial" : "sent";
+      const names = rows
+        .map((row) => row.display_name)
+        .filter(Boolean) as string[];
+      const note = duplicateRows > 0
+        ? `${fmtCount(sentRows)} sent to Mojo, ${fmtCount(visibleRows)} new visible contacts, ${fmtCount(duplicateRows)} already existed / kept old.`
+        : `${fmtCount(sentRows)} sent to Mojo, ${fmtCount(visibleRows)} new visible contacts.`;
+
+      return {
+        key,
+        pushed_at: latest.pushed_at,
+        list_name: latest.list_name,
+        batch_id: latest.batch_id,
+        status,
+        selected_rows: selected,
+        sent_rows: sentRows,
+        imported_rows: imported,
+        duplicate_rows: duplicateRows,
+        visible_rows: visibleRows,
+        skipped_rows: skippedRows,
+        failed_rows: failedRows,
+        names,
+        note,
+      };
+    })
+    .sort((a, b) => b.pushed_at.localeCompare(a.pushed_at));
+}
+
 function chartRowsFromMap(map: Map<string, number>, palette: string[]): ChartRow[] {
   return Array.from(map.entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
+    .map(([label, value], index) => ({
+      label,
+      value,
+      color: palette[index % palette.length],
+    }));
+}
+
+function chartRowsFromDateMap(map: Map<string, number>, palette: string[]): ChartRow[] {
+  return Array.from(map.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .slice(0, 7)
     .map(([label, value], index) => ({
       label,
       value,
@@ -553,7 +666,8 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const user = getCurrentUser();
   if (!user) redirect("/login");
 
-  const filters = normalizeFilters(searchParams);
+  const latestImportedDate = await safe(fetchLatestCallDate, null);
+  const filters = normalizeFilters(searchParams, latestImportedDate);
 
   const [syncBatches, pushHistory, rawCalls, recordings] = await Promise.all([
     safe(fetchSyncBatches, []),
@@ -601,6 +715,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   ]);
   const connectedCalls = calls.filter(isConnectedCall);
   const recordingCount = calls.filter((call) => call.recording_url).length;
+  const pushBatches = buildMojoPushBatches(pushHistory);
   const latestSync = syncBatches[0]?.synced_at ?? null;
   const todayKey = inputDate(new Date());
   const callsToday = calls.filter((call) => call.called_at.slice(0, 10) === todayKey);
@@ -625,7 +740,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     pushOutcomes.set(label, (pushOutcomes.get(label) ?? 0) + 1);
   }
 
-  const callsByDayRows = chartRowsFromMap(callsByDay, ["#1f6feb", "#2ea043", "#d29922", "#a371f7", "#f85149"]);
+  const callsByDayRows = chartRowsFromDateMap(callsByDay, ["#1f6feb", "#2ea043", "#d29922", "#a371f7", "#f85149", "#58a6ff", "#3fb950"]);
   const callsByDispositionRows = chartRowsFromMap(callsByDisposition, ["#2ea043", "#1f6feb", "#d29922", "#a371f7", "#f85149"]);
   const recordingsByAgentRows = chartRowsFromMap(recordingsByAgent, ["#d29922", "#58a6ff", "#3fb950", "#a371f7", "#f85149"]);
   const pushOutcomeRows = chartRowsFromMap(pushOutcomes, ["#3fb950", "#d29922", "#f85149", "#8b949e", "#58a6ff"]);
@@ -636,7 +751,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const pagedCalls = calls.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
-    <AppShell user={user}>
       <div className="p-8 max-w-7xl">
         <div className="mb-6 flex items-end justify-between gap-4">
           <div>
@@ -652,6 +766,18 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Auto-sync:</span> VPS cron every 30 minutes.{" "}
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Last sync:</span> {latestSync ? fmtDateTime(latestSync) : "No sync logged yet"}.{" "}
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Loaded range:</span> {filters.start} to {filters.end}.
+          {latestImportedDate && (
+            <>
+              {" "}
+              <span className="font-semibold" style={{ color: "#58a6ff" }}>Latest imported call:</span> {latestImportedDate}.{" "}
+              <a
+                href={`/mojo-stats?start=${defaultStartDate()}&end=${latestImportedDate}&agent=${encodeURIComponent(filters.agent)}&disposition=${encodeURIComponent(filters.disposition)}&asset=${encodeURIComponent(filters.asset)}&page=1`}
+                style={{ color: "#58a6ff", textDecoration: "underline" }}
+              >
+                Jump to latest
+              </a>
+            </>
+          )}
         </div>
 
         <section className="mb-6">
@@ -712,32 +838,35 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             </span>
           </div>
           <div className="divide-y" style={{ borderColor: "#21262d" }}>
-            {pushHistory.length === 0 ? (
+            {pushBatches.length === 0 ? (
               <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No push history yet.</div>
             ) : (
-              pushHistory.slice(0, 5).map((item) => {
-                const label = item.display_name ?? `Owner ${item.owner_id}`;
-                const status = item.push_status ?? item.row_status ?? "sent";
-                const note = item.error ?? item.reason ?? "No additional note";
+              pushBatches.slice(0, 5).map((batch) => {
+                const namePreview = batch.names.slice(0, 6).join(", ");
+                const overflowCount = Math.max(0, batch.names.length - 6);
                 return (
-                  <div key={`${item.batch_id ?? "batch"}-${item.id}`} className="px-5 py-3">
+                  <div key={batch.key} className="px-5 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-semibold" style={{ color: pushStatusColor(status) }}>
-                          {status}
+                        <span className="text-xs font-semibold" style={{ color: pushStatusColor(batch.status) }}>
+                          {batch.status}
                         </span>
-                        <span className="text-xs" style={{ color: "#c9d1d9" }}>{label}</span>
+                        <span className="text-xs" style={{ color: "#c9d1d9" }}>{batch.note}</span>
                       </div>
-                      <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(item.pushed_at)}</span>
+                      <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(batch.pushed_at)}</span>
                     </div>
                     <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
-                      {fmtCount(item.selected_rows)} selected, {fmtCount(item.imported_rows)} imported
-                      {item.list_name ? ` · ${item.list_name}` : ""}
-                      {item.batch_id ? ` · batch ${item.batch_id}` : ""}
+                      {fmtCount(batch.selected_rows)} selected, {fmtCount(batch.imported_rows)} importer accepted
+                      {batch.skipped_rows > 0 ? `, ${fmtCount(batch.skipped_rows)} skipped` : ""}
+                      {batch.failed_rows > 0 ? `, ${fmtCount(batch.failed_rows)} failed` : ""}
+                      {batch.list_name ? ` | ${batch.list_name}` : ""}
+                      {batch.batch_id ? ` | batch ${batch.batch_id}` : ""}
                     </div>
-                    <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
-                      {note}
-                    </div>
+                    {namePreview && (
+                      <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
+                        {namePreview}{overflowCount > 0 ? `, +${fmtCount(overflowCount)} more` : ""}
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -958,6 +1087,5 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           </div>
         </section>
       </div>
-    </AppShell>
   );
 }

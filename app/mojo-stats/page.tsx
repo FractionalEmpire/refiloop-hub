@@ -697,6 +697,20 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Mojo Push History</h2>
             <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Recent push outcomes from Skip Trace. Detailed row-level context lives here now.</p>
           </div>
+          <div
+            className="flex flex-wrap items-center gap-2 px-5 py-3 text-xs"
+            style={{ background: "#0f1621", borderBottom: "1px solid #30363d", color: "#8b949e" }}
+          >
+            <span className="rounded-full border px-2 py-0.5" style={{ borderColor: "#30363d", color: "#c9d1d9" }}>
+              Source: Skip Trace
+            </span>
+            <span className="rounded-full border px-2 py-0.5" style={{ borderColor: "#30363d", color: "#c9d1d9" }}>
+              Row-level push log
+            </span>
+            <span className="rounded-full border px-2 py-0.5" style={{ borderColor: "#30363d", color: "#c9d1d9" }}>
+              Latest 5 batches
+            </span>
+          </div>
           <div className="divide-y" style={{ borderColor: "#21262d" }}>
             {pushHistory.length === 0 ? (
               <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No push history yet.</div>

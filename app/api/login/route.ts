@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validatePassword } from "@/lib/auth";
-import { cookies } from "next/headers";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -14,8 +13,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
 
-  const cookieStore = cookies();
-  cookieStore.set("rl_user", username, {
+  const res = NextResponse.json({ ok: true, user: username });
+  res.cookies.set("rl_user", username, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
@@ -23,5 +22,5 @@ export async function POST(req: NextRequest) {
     path: "/",
   });
 
-  return NextResponse.json({ ok: true, user: username });
+  return res;
 }

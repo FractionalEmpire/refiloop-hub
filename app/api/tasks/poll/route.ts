@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { appendTaskTrace } from "@/lib/task-trace";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
       .from("collab_tasks")
       .update({ status: "todo", triggered_at: null, last_activity_at: null, updated_at: new Date().toISOString() })
       .eq("id", t.id);
+    await appendTaskTrace(t.id, `Cron reset stale in_progress task after ${STUCK_MINUTES} minutes.`);
     reset++;
   }
 
@@ -61,10 +63,24 @@ export async function GET(req: NextRequest) {
       .update({ status: "in_progress", triggered_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", task.id);
 
-    fetch(`${appUrl}/api/tasks/${task.id}/execute`, {
+    await appendTaskTrace(task.id, `Cron picked up todo task and is dispatching executor from ${appUrl}.`);
+    const res = await fetch(`${appUrl}/api/tasks/${task.id}/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-internal-key": key },
-    }).catch(() => {});
+    }).catch((err) => err as Error);
+
+    if (res instanceof Error) {
+      await appendTaskTrace(task.id, `Cron dispatch failed before executor response: ${res.message}`);
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      await appendTaskTrace(task.id, `Cron executor returned HTTP ${res.status}: ${text || "no body"}`);
+      continue;
+    }
+
+    await appendTaskTrace(task.id, "Cron executor accepted the task dispatch.");
 
     triggered++;
   }

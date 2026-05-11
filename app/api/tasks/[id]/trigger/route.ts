@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { appendTaskTrace } from "@/lib/task-trace";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,8 @@ export async function POST(
   const { id } = params;
   const body = await req.json().catch(() => ({}));
   const model = body.model || "claude-sonnet-4-6";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://refiloop-hub.vercel.app";
+  const internalKey = process.env.INTERNAL_API_KEY || "";
 
   const { data: task, error } = await supabase
     .from("collab_tasks")
@@ -22,6 +25,12 @@ export async function POST(
     return NextResponse.json({ error: "Task is not assigned to Claude" }, { status: 400 });
   }
 
+  await appendTaskTrace(id, `Trigger requested via ${appUrl} using model ${model}.`);
+  await appendTaskTrace(
+    id,
+    `Env check: anthropic=${Boolean(process.env.BUILDER_HUB_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY)} github=${Boolean(process.env.GITHUB_TOKEN)} internal_api_key=${Boolean(internalKey)}`
+  );
+
   await supabase
     .from("collab_tasks")
     .update({
@@ -32,16 +41,27 @@ export async function POST(
     })
     .eq("id", id);
 
-  // Fire executor — don't await (fire and forget)
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://refiloop-hub.vercel.app";
-  fetch(`${appUrl}/api/tasks/${id}/execute`, {
+  const res = await fetch(`${appUrl}/api/tasks/${id}/execute`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-internal-key": process.env.INTERNAL_API_KEY || "",
+      "x-internal-key": internalKey,
     },
     body: JSON.stringify({ model }),
-  }).catch(() => {});
+  }).catch((err) => err as Error);
+
+  if (res instanceof Error) {
+    await appendTaskTrace(id, `Trigger dispatch failed before executor response: ${res.message}`);
+    return NextResponse.json({ ok: false, error: res.message }, { status: 500 });
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    await appendTaskTrace(id, `Executor endpoint returned HTTP ${res.status}: ${text || "no body"}`);
+    return NextResponse.json({ ok: false, error: `Executor failed with HTTP ${res.status}` }, { status: 500 });
+  }
+
+  await appendTaskTrace(id, "Executor endpoint accepted the task dispatch.");
 
   return NextResponse.json({
     ok: true,

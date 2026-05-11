@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/lib/supabase";
+import { appendTaskTrace, envStatus } from "@/lib/task-trace";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -143,18 +144,6 @@ const verifyTools: Anthropic.Tool[] = [
   },
 ];
 
-async function appendNote(taskId: string, note: string) {
-  const { data } = await supabase.from("collab_tasks").select("notes").eq("id", taskId).single();
-  const prev = data?.notes || "";
-  const stamped = `[${new Date().toISOString()}] ${note}`;
-  const updated = prev ? `${prev}\n\n${stamped}` : stamped;
-  await supabase
-    .from("collab_tasks")
-    .update({ notes: updated, updated_at: new Date().toISOString() })
-    .eq("id", taskId);
-  return updated;
-}
-
 function extractTaskBranch(task: { context?: string | null; notes?: string | null }) {
   const text = [task.context, task.notes].filter(Boolean).join("\n");
   const match = text.match(/(?:^|\n)\s*(?:branch|git branch)\s*[:=]\s*([A-Za-z0-9._/-]+)/i);
@@ -171,6 +160,7 @@ async function postSlack(text: string) {
 }
 
 async function githubReadFile(repo: string, path: string, ref = defaultTaskBranch): Promise<string> {
+  if (!GITHUB_TOKEN) return "GitHub token is missing in executor env.";
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/contents/${path}?ref=${ref}`;
   const res = await fetch(url, {
     headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" },
@@ -321,18 +311,18 @@ async function runTool(
     }
 
     case "log_progress": {
-      await appendNote(taskId, input.note);
+      await appendTaskTrace(taskId, input.note);
       return { result: "Progress logged." };
     }
 
     case "complete_task": {
       // Don't set done yet — return the summary for the verify step
-      await appendNote(taskId, `📋 EXECUTOR SUMMARY\n${input.summary}`);
+      await appendTaskTrace(taskId, `📋 EXECUTOR SUMMARY\n${input.summary}`);
       return { result: "__COMPLETE__:" + input.summary, terminal: true };
     }
 
     case "mark_blocked": {
-      await appendNote(taskId, `🚫 BLOCKED: ${input.reason}`);
+      await appendTaskTrace(taskId, `🚫 BLOCKED: ${input.reason}`);
       await supabase.from("collab_tasks").update({
         status: "blocked",
         updated_at: new Date().toISOString(),
@@ -353,6 +343,7 @@ export async function POST(
   const { id } = params;
   const reqBody = await req.json().catch(() => ({}));
   const model = reqBody.model || "claude-sonnet-4-6";
+  const env = envStatus();
 
   const { data: task, error } = await supabase
     .from("collab_tasks")
@@ -363,6 +354,14 @@ export async function POST(
   if (error || !task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
   const taskBranch = extractTaskBranch(task);
   defaultTaskBranch = taskBranch;
+
+  await appendTaskTrace(
+    id,
+    `Executor start: branch=${taskBranch}, model=${model}, env anthropic=${env.anthropic}, github=${env.github}, internal_api_key=${env.internalApiKey}, supabase_url=${env.supabaseUrl}, supabase_service_key=${env.supabaseServiceKey}`
+  );
+  if (!env.anthropic || !env.github || !env.supabaseUrl || !env.supabaseServiceKey) {
+    await appendTaskTrace(id, "Executor env check failed. One or more required credentials are missing.");
+  }
 
   const systemPrompt = `You are Claude, an autonomous AI agent for RefiLoop (commercial mortgage brokerage). You have been assigned a task and must complete it without human help.
 
@@ -415,7 +414,7 @@ Get started.`;
       messages.push({ role: "assistant", content: response.content });
 
       if (response.stop_reason === "end_turn") {
-        await appendNote(id, "⚠️ Claude stopped without calling complete_task or mark_blocked.");
+        await appendTaskTrace(id, "⚠️ Claude stopped without calling complete_task or mark_blocked.");
         await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
         break;
       }
@@ -438,19 +437,20 @@ Get started.`;
 
       // Heartbeat — lets the hub detect if Claude is still working vs hung
       await supabase.from("collab_tasks").update({ last_activity_at: new Date().toISOString() }).eq("id", id);
+      await appendTaskTrace(id, `Heartbeat after iteration ${iterations}.`);
       messages.push({ role: "user", content: toolResults });
     }
 
     if (!done && iterations >= MAX) {
-      await appendNote(id, "⚠️ Hit max iterations without finishing.");
+      await appendTaskTrace(id, "⚠️ Hit max iterations without finishing.");
       await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
     }
 
     // Verify step — only runs when executor called complete_task
     if (completionSummary) {
-      await appendNote(id, "🔍 Verifying...");
+      await appendTaskTrace(id, "🔍 Verifying...");
       const verify = await runVerify(id, task, completionSummary);
-      await appendNote(id, `${verify.pass ? "✅" : "❌"} VERIFICATION ${verify.pass ? "PASSED" : "FAILED"}\n${verify.reason}`);
+      await appendTaskTrace(id, `${verify.pass ? "✅" : "❌"} VERIFICATION ${verify.pass ? "PASSED" : "FAILED"}\n${verify.reason}`);
       if (verify.pass) {
         await supabase.from("collab_tasks").update({
           status: "done",
@@ -465,7 +465,7 @@ Get started.`;
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await appendNote(id, `❌ Execution error: ${msg}`);
+    await appendTaskTrace(id, `❌ Execution error: ${msg}`);
     await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
     await postSlack(`❌ *Claude task execution failed*\nTask: ${task.title}\nError: ${msg}`);
   }

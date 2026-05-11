@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const user = getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const [tasksRes, metaRes] = await Promise.all([
     supabase
       .from("collab_tasks")
@@ -48,6 +54,11 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
+  const user = getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   const { action, name } = body as { action: string; name: string };
 

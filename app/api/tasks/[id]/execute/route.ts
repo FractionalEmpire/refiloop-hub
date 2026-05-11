@@ -11,6 +11,7 @@ const GITHUB_OWNER = process.env.GITHUB_OWNER || "FractionalEmpire";
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+let defaultTaskBranch = "hub-david-review";
 
 const tools: Anthropic.Tool[] = [
   {
@@ -36,7 +37,7 @@ const tools: Anthropic.Tool[] = [
         path: { type: "string" },
         content: { type: "string", description: "Full file content (UTF-8)" },
         message: { type: "string", description: "Commit message (will be prefixed with [Claude])" },
-        branch: { type: "string", description: "Branch to commit to (default: main). Use this when the task specifies a branch." },
+        branch: { type: "string", description: "Branch to commit to (default: hub-david-review for Hub tasks, client-review-skip-trace for skip-trace UI). Use this when the task specifies a branch." },
       },
       required: ["repo", "path", "content", "message"],
     },
@@ -154,6 +155,12 @@ async function appendNote(taskId: string, note: string) {
   return updated;
 }
 
+function extractTaskBranch(task: { context?: string | null; notes?: string | null }) {
+  const text = [task.context, task.notes].filter(Boolean).join("\n");
+  const match = text.match(/(?:^|\n)\s*(?:branch|git branch)\s*[:=]\s*([A-Za-z0-9._/-]+)/i);
+  return match?.[1]?.trim() || "hub-david-review";
+}
+
 async function postSlack(text: string) {
   if (!SLACK_WEBHOOK) return;
   await fetch(SLACK_WEBHOOK, {
@@ -163,7 +170,7 @@ async function postSlack(text: string) {
   }).catch(() => {});
 }
 
-async function githubReadFile(repo: string, path: string, ref = "main"): Promise<string> {
+async function githubReadFile(repo: string, path: string, ref = defaultTaskBranch): Promise<string> {
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/contents/${path}?ref=${ref}`;
   const res = await fetch(url, {
     headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" },
@@ -234,12 +241,12 @@ async function runTool(
 ): Promise<{ result: string; terminal?: boolean }> {
   switch (name) {
     case "github_read_file": {
-      const content = await githubReadFile(input.repo, input.path, input.ref);
+      const content = await githubReadFile(input.repo, input.path, input.ref || defaultTaskBranch);
       return { result: content };
     }
 
     case "github_write_file": {
-      const branch = input.branch || "main";
+      const branch = input.branch || defaultTaskBranch;
       let sha: string | undefined;
       const existing = await fetch(
         `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${branch}`,
@@ -276,7 +283,7 @@ async function runTool(
     }
 
     case "github_list_files": {
-      const ref = input.ref || "main";
+      const ref = input.ref || defaultTaskBranch;
       const url = `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${ref}`;
       const res = await fetch(url, {
         headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" },
@@ -354,6 +361,8 @@ export async function POST(
     .single();
 
   if (error || !task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  const taskBranch = extractTaskBranch(task);
+  defaultTaskBranch = taskBranch;
 
   const systemPrompt = `You are Claude, an autonomous AI agent for RefiLoop (commercial mortgage brokerage). You have been assigned a task and must complete it without human help.
 
@@ -363,9 +372,10 @@ Key repos:
 - refiloop2: Main config repo with docs, supabase functions, scripts.
 
 Deployment context (IMPORTANT — default branches):
-- refiloop-hub: commit to main (Vercel auto-deploys)
+- refiloop-hub: commit to hub-david-review unless the task explicitly says main
 - skip-trace-ui / any task mentioning skip trace UI: commit to branch client-review-skip-trace (production is promoted from preview builds of that branch, NOT main)
-- If the task description specifies a branch field, always use that branch.
+- If the task context or notes specify a branch field, always use that branch.
+- If no branch is specified, default to ${taskBranch}.
 
 Rules:
 1. Start by calling log_progress with your understanding of the task and your plan. If the task specifies a file path, use it directly — do not search.

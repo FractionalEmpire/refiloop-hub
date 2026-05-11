@@ -33,6 +33,7 @@ const ASSIGNEE_LABEL: Record<string, string> = {
 export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "david" | "gorjan" | "claude">("all");
   const [priorityFilter, setPriorityFilter] = useState<"all" | "p0" | "p1" | "p2" | "later">("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
@@ -40,7 +41,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [allProjectNames, setAllProjectNames] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
+  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", url: "", branch: "hub-david-review" });
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [showRunModal, setShowRunModal] = useState(false);
@@ -57,10 +58,24 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await fetch(`/api/tasks${filter !== "all" ? `?assignee=${filter}` : ""}`);
-    const data = await res.json();
-    setTasks(Array.isArray(data) ? data : []);
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/tasks${filter !== "all" ? `?assignee=${filter}` : ""}`, { credentials: "include" });
+      const contentType = res.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json") ? await res.json() : await res.text();
+
+      if (!res.ok) {
+        const message = typeof payload === "string" ? payload : payload?.error || `Failed to load tasks (${res.status})`;
+        throw new Error(message);
+      }
+
+      setTasks(Array.isArray(payload) ? payload : []);
+      setError(null);
+    } catch (err) {
+      setTasks([]);
+      setError(err instanceof Error ? err.message : "Failed to load tasks");
+    } finally {
+      setLoading(false);
+    }
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
@@ -74,11 +89,15 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
 
   // Load ALL project names (ignores assignee filter — needed for dropdown)
   useEffect(() => {
-    fetch("/api/projects")
-      .then((r) => r.json())
-      .then((data: { name: string }[]) => {
+    fetch("/api/projects", { credentials: "include" })
+      .then(async (r) => {
+        const contentType = r.headers.get("content-type") || "";
+        return contentType.includes("application/json") ? r.json() : r.text();
+      })
+      .then((data: { name: string }[] | string) => {
         if (Array.isArray(data)) setAllProjectNames(data.map((p) => p.name).sort());
-      });
+      })
+      .catch(() => {});
   }, []);
 
   const availableProjects = useMemo(() => {
@@ -102,14 +121,17 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   async function createTask() {
     if (!newTask.title.trim()) return;
     setSaving(true);
+    const notes = newTask.assignee === "claude"
+      ? `branch: ${newTask.branch || "hub-david-review"}${newTask.description ? `\n\n${newTask.description}` : ""}`
+      : newTask.description;
     const res = await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newTask),
+      body: JSON.stringify({ ...newTask, notes }),
     });
     const task = await res.json();
     setTasks((prev) => [task, ...prev]);
-    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
+    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", url: "", branch: "hub-david-review" });
     setShowNew(false);
     setSaving(false);
   }
@@ -247,6 +269,12 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
         </div>
       </div>
 
+      {error && (
+        <div className="mb-4 rounded-md border px-3 py-2 text-sm" style={{ background: "#2d1a1a", borderColor: "#f85149", color: "#f85149" }}>
+          {error}
+        </div>
+      )}
+
       {/* New Task Modal */}
       {showNew && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: "#0008" }}>
@@ -284,6 +312,18 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   </select>
                 </div>
                 <div>
+                  <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Branch</label>
+                  <select
+                    className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
+                    style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+                    value={newTask.branch}
+                    onChange={(e) => setNewTask((p) => ({ ...p, branch: e.target.value }))}
+                  >
+                    <option value="hub-david-review">hub-david-review</option>
+                    <option value="main">main</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Priority</label>
                   <select
                     className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
@@ -312,22 +352,22 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   </select>
                 </div>
                 <div>
-                <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Type</label>
-                <select
-                className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
-                style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
-                value={newTask.type}
-                onChange={(e) => setNewTask((p) => ({ ...p, type: e.target.value }))}
-                >
-                <option value="task">☑ Task</option>
-                <option value="bug">🐛 Bug</option>
-                <option value="feature">✨ Feature</option>
-                </select>
+                  <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Type</label>
+                  <select
+                    className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
+                    style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+                    value={newTask.type}
+                    onChange={(e) => setNewTask((p) => ({ ...p, type: e.target.value }))}
+                  >
+                    <option value="task">☑ Task</option>
+                    <option value="bug">🐛 Bug</option>
+                    <option value="feature">✨ Feature</option>
+                  </select>
                 </div>
               </div>
               {newTask.assignee === "claude" && (
                 <p className="text-xs px-3 py-2 rounded-md" style={{ background: "#d9770610", border: "1px solid #d9770630", color: "#d97706" }}>
-                  Claude will execute this autonomously. Make the description detailed and specific.
+                  Claude will execute this autonomously on {newTask.branch || "hub-david-review"}. Make the description detailed and specific.
                 </p>
               )}
               <div className="flex gap-2 pt-1">

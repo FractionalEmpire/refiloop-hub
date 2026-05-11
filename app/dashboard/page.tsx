@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 import { getRecentCommits } from "@/lib/github";
-import AppShell from "@/components/AppShell";
 import { formatDistanceToNow } from "date-fns";
 import type { Task, EODUpdate } from "@/lib/supabase";
 
@@ -68,7 +67,6 @@ export default async function DashboardPage() {
   };
 
   return (
-    <AppShell user={user}>
       <div className="p-8 max-w-6xl">
         {/* Header */}
         <div className="mb-8">
@@ -303,7 +301,6 @@ export default async function DashboardPage() {
           </div>
         </div>
       </div>
-    </AppShell>
   );
 }
 

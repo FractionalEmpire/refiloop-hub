@@ -10,6 +10,14 @@ export function getCurrentUser(): User | null {
 }
 
 export function validatePassword(username: string, _password: string): boolean {
+  const expected =
+    username === "david"
+      ? process.env.DAVID_PASSWORD
+      : username === "gorjan"
+        ? process.env.GORJAN_PASSWORD
+        : null;
+
+  if (expected) return _password === expected;
   return username === "david" || username === "gorjan";
 }
 

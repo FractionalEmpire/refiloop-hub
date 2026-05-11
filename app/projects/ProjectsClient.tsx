@@ -242,13 +242,46 @@ function ProjectCard({
 export default function ProjectsClient() {
   const [projects, setProjects] = useState<ProjectData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [hideDone, setHideDone] = useState(true);
 
   useEffect(() => {
-    fetch("/api/projects")
-      .then((r) => r.json())
-      .then((data) => { setProjects(Array.isArray(data) ? data : []); setLoading(false); });
+    let cancelled = false;
+
+    async function loadProjects() {
+      try {
+        const res = await fetch("/api/projects", { credentials: "include" });
+        const contentType = res.headers.get("content-type") || "";
+        const payload = contentType.includes("application/json")
+          ? await res.json()
+          : await res.text();
+
+        if (!res.ok) {
+          const message = typeof payload === "string"
+            ? payload
+            : payload?.error || `Failed to load projects (${res.status})`;
+          throw new Error(message);
+        }
+
+        if (!cancelled) {
+          setProjects(Array.isArray(payload) ? payload : []);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setProjects([]);
+          setError(err instanceof Error ? err.message : "Failed to load projects");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadProjects();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handleMarkDone(name: string, done: boolean) {
@@ -296,6 +329,12 @@ export default function ProjectsClient() {
           </button>
         )}
       </div>
+
+      {error && (
+        <div className="mb-4 rounded-md border px-3 py-2 text-sm" style={{ background: "#2d1a1a", borderColor: "#f85149", color: "#f85149" }}>
+          {error}
+        </div>
+      )}
 
       {visible.length === 0 ? (
         <div style={{ color: "#8b949e" }} className="text-sm">

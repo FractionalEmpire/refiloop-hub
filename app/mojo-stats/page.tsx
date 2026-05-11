@@ -43,6 +43,20 @@ type MojoPushHistoryItem = {
   maturity_date: string | null;
 };
 
+type MojoPushBatch = {
+  key: string;
+  pushed_at: string;
+  list_name: string | null;
+  batch_id: string | null;
+  selected_rows: number;
+  imported_rows: number;
+  sent: number;
+  skipped: number;
+  failed: number;
+  total: number;
+  note: string;
+};
+
 type CallAttempt = {
   id: number;
   owner_id: number | null;
@@ -220,7 +234,7 @@ async function fetchMojoPushHistory(): Promise<MojoPushHistoryItem[]> {
     .from("mojo_push_history")
     .select("id,owner_id,pushed_at,list_name,source,batch_id,selected_rows,imported_rows,push_status,error,display_name,row_status,reason,phone_count,email_count,loan_amount,maturity_date")
     .order("pushed_at", { ascending: false })
-    .limit(20);
+    .limit(500);
   if (error) throw error;
   return (data ?? []) as MojoPushHistoryItem[];
 }
@@ -300,6 +314,40 @@ function pushStatusColor(status: string | null | undefined) {
   if (value === "error" || value === "failed") return "#f85149";
   if (value === "skipped" || value === "held") return "#d29922";
   return "#3fb950";
+}
+
+function buildPushBatches(rows: MojoPushHistoryItem[]): MojoPushBatch[] {
+  const batches = new Map<string, MojoPushBatch>();
+
+  for (const item of rows) {
+    const key = item.batch_id || `${item.list_name || "unknown"}:${item.pushed_at.slice(0, 19)}`;
+    const status = (item.push_status ?? item.row_status ?? "sent").trim().toLowerCase();
+    const existing = batches.get(key);
+    const batch = existing ?? {
+      key,
+      pushed_at: item.pushed_at,
+      list_name: item.list_name,
+      batch_id: item.batch_id,
+      selected_rows: Number(item.selected_rows ?? 0),
+      imported_rows: Number(item.imported_rows ?? 0),
+      sent: 0,
+      skipped: 0,
+      failed: 0,
+      total: 0,
+      note: item.error ?? item.reason ?? "No additional note",
+    };
+
+    batch.pushed_at = item.pushed_at > batch.pushed_at ? item.pushed_at : batch.pushed_at;
+    batch.selected_rows = Math.max(batch.selected_rows, Number(item.selected_rows ?? 0));
+    batch.imported_rows = Math.max(batch.imported_rows, Number(item.imported_rows ?? 0));
+    batch.total += 1;
+    if (status === "skipped" || status === "held") batch.skipped += 1;
+    else if (status === "failed" || status === "error") batch.failed += 1;
+    else batch.sent += 1;
+    if (!existing) batches.set(key, batch);
+  }
+
+  return Array.from(batches.values()).sort((a, b) => b.pushed_at.localeCompare(a.pushed_at));
 }
 
 function chartRowsFromMap(map: Map<string, number>, palette: string[]): ChartRow[] {
@@ -613,6 +661,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const connectedCalls = calls.filter(isConnectedCall);
   const recordingCount = calls.filter((call) => call.recording_url).length;
   const latestSync = syncBatches[0]?.synced_at ?? null;
+  const pushBatches = buildPushBatches(pushHistory);
   const todayKey = inputDate(new Date());
   const callsToday = calls.filter((call) => call.called_at.slice(0, 10) === todayKey);
   const callsByDay = new Map<string, number>();
@@ -716,13 +765,38 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
         <section className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
           <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
             <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Mojo Push History</h2>
-            <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Recent push outcomes from Skip Trace. Detailed row-level context lives here now.</p>
+            <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Recent push outcomes from Skip Trace, grouped by import batch with row-level context below.</p>
           </div>
           <div className="divide-y" style={{ borderColor: "#21262d" }}>
             {pushHistory.length === 0 ? (
               <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No push history yet.</div>
             ) : (
-              pushHistory.slice(0, 5).map((item) => {
+              <>
+                <div className="grid gap-3 px-5 py-4 lg:grid-cols-2">
+                  {pushBatches.slice(0, 6).map((batch) => {
+                    const status = batch.failed > 0 ? "failed" : batch.skipped > 0 ? "skipped" : "sent";
+                    return (
+                      <div key={batch.key} className="rounded-md border p-3" style={{ background: "#0d1117", borderColor: "#30363d" }}>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs font-semibold" style={{ color: pushStatusColor(status) }}>
+                            {batch.failed > 0 ? "needs review" : "logged"}
+                          </span>
+                          <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(batch.pushed_at)}</span>
+                        </div>
+                        <div className="mt-2 text-sm font-semibold" style={{ color: "#e6edf3" }}>
+                          {fmtCount(batch.selected_rows)} selected, {fmtCount(batch.imported_rows)} imported
+                        </div>
+                        <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
+                          {fmtCount(batch.sent)} sent - {fmtCount(batch.skipped)} skipped - {fmtCount(batch.failed)} failed - {fmtCount(batch.total)} logged rows
+                        </div>
+                        <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
+                          {batch.list_name || "No list name"}{batch.batch_id ? ` - batch ${batch.batch_id}` : ""}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {pushHistory.slice(0, 12).map((item) => {
                 const label = item.display_name ?? `Owner ${item.owner_id}`;
                 const status = item.push_status ?? item.row_status ?? "sent";
                 const note = item.error ?? item.reason ?? "No additional note";
@@ -747,7 +821,8 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                     </div>
                   </div>
                 );
-              })
+                })}
+              </>
             )}
           </div>
         </section>

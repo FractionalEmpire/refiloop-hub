@@ -15,7 +15,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 const STATUSES = ["todo", "in_progress", "blocked", "done"] as const;
 const TYPE_CONFIG: Record<string, { label: string; icon: string; color: string; bg: string }> = {
-  bug:     { label: "Bug",     icon: "ð", color: "#f85149", bg: "#f8514920" },h
+  bug:     { label: "Bug",     icon: "ð", color: "#f85149", bg: "#f8514920" },
   feature: { label: "Feature", icon: "â¨", color: "#58a6ff", bg: "#58a6ff20" },
   task:    { label: "Task",    icon: "â",  color: "#8b949e", bg: "#8b949e20" },
 };

@@ -1325,3 +1325,12 @@ export default function FiltersClient() {
                   </div>
 
   
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

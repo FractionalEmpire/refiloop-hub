@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://refiloop-hub.vercel.app";
+  const appUrl = new URL(req.url).origin;
   const key = process.env.INTERNAL_API_KEY || "";
   const stuckCutoff = new Date(Date.now() - STUCK_MINUTES * 60 * 1000).toISOString();
 

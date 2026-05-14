@@ -9,9 +9,9 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
+  const appUrl = new URL(req.url).origin;
   const body = await req.json().catch(() => ({}));
   const model = body.model || "claude-sonnet-4-6";
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://refiloop-hub.vercel.app";
   const internalKey = process.env.INTERNAL_API_KEY || "";
 
   const { data: task, error } = await supabase

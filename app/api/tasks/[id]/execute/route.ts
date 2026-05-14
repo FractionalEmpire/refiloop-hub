@@ -44,6 +44,22 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "github_replace_text",
+    description: "Replace exact text in a GitHub file and commit it. Use this for small targeted edits instead of rewriting an entire file.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: { type: "string" },
+        path: { type: "string" },
+        old_text: { type: "string", description: "Exact text currently in the file" },
+        new_text: { type: "string", description: "Replacement text" },
+        message: { type: "string", description: "Commit message (will be prefixed with [Claude])" },
+        branch: { type: "string", description: "Branch to commit to (default: current task branch)" },
+      },
+      required: ["repo", "path", "old_text", "new_text", "message"],
+    },
+  },
+  {
     name: "github_list_files",
     description: "List files in a directory of a GitHub repository",
     input_schema: {
@@ -272,6 +288,43 @@ async function runTool(
       return { result: `Committed to ${branch}: ${data.commit.html_url}` };
     }
 
+    case "github_replace_text": {
+      const branch = input.branch || defaultTaskBranch;
+      const existing = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${branch}`,
+        { headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" } }
+      );
+      if (!existing.ok) return { result: `HTTP ${existing.status}: ${await existing.text()}` };
+
+      const existingData = await existing.json() as { sha: string; content: string };
+      const content = Buffer.from(existingData.content, "base64").toString("utf-8");
+      if (!content.includes(input.old_text)) {
+        return { result: `Exact old_text was not found in ${input.path}. Read the file and try a narrower exact replacement.` };
+      }
+
+      const updated = content.replace(input.old_text, input.new_text);
+      const res = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `token ${GITHUB_TOKEN}`,
+            "Content-Type": "application/json",
+            Accept: "application/vnd.github.v3+json",
+          },
+          body: JSON.stringify({
+            message: `[Claude] ${input.message}`,
+            content: Buffer.from(updated).toString("base64"),
+            branch,
+            sha: existingData.sha,
+          }),
+        }
+      );
+      if (!res.ok) return { result: `HTTP ${res.status}: ${await res.text()}` };
+      const data = await res.json() as { commit: { html_url: string } };
+      return { result: `Replaced text and committed to ${branch}: ${data.commit.html_url}` };
+    }
+
     case "github_list_files": {
       const ref = input.ref || defaultTaskBranch;
       const url = `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${ref}`;
@@ -379,7 +432,7 @@ Deployment context (IMPORTANT — default branches):
 Rules:
 1. Start by calling log_progress with your understanding of the task and your plan. If the task specifies a file path, use it directly — do not search.
 2. When you need to read multiple files, call github_read_file for all of them in the same step — do not read one at a time sequentially. This saves iterations.
-3. Make minimal changes. Read the file, apply only the necessary edits, write back the complete file. Never rewrite a file from scratch when a small targeted change will do — this saves tokens and avoids timeouts.
+3. Make minimal changes. For small edits, prefer github_replace_text with exact old/new snippets. Only use github_write_file when you truly need to rewrite the whole file.
 4. Call log_progress frequently to show your work.
 5. Always end with complete_task (success) or mark_blocked (can't finish).
 6. The complete_task summary is what David sees — include commit URLs, what changed, and proof it works.`;
@@ -474,5 +527,11 @@ Get started.`;
     await postSlack(`❌ *Claude task execution failed*\nTask: ${task.title}\nError: ${msg}`);
   }
 
-  return NextResponse.json({ ok: true, iterations, done, verified: !!completionSummary });
+  const { data: finalTask } = await supabase
+    .from("collab_tasks")
+    .select("status")
+    .eq("id", id)
+    .single();
+
+  return NextResponse.json({ ok: true, iterations, done, verified: !!completionSummary, status: finalTask?.status || "unknown" });
 }

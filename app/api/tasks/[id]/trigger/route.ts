@@ -61,10 +61,17 @@ export async function POST(
     return NextResponse.json({ ok: false, error: `Executor failed with HTTP ${res.status}` }, { status: 500 });
   }
 
-  await appendTaskTrace(id, "Executor endpoint accepted the task dispatch.");
+  const { data: afterDispatch } = await supabase
+    .from("collab_tasks")
+    .select("status")
+    .eq("id", id)
+    .single();
+
+  await appendTaskTrace(id, `Executor endpoint finished. Current task status: ${afterDispatch?.status || "unknown"}.`);
 
   return NextResponse.json({
     ok: true,
+    status: afterDispatch?.status || "unknown",
     message: "Claude is on it. Evidence will appear in task notes when done.",
   });
 }

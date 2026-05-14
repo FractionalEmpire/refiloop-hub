@@ -30,6 +30,12 @@ const ASSIGNEE_LABEL: Record<string, string> = {
   david: "D", gorjan: "G", both: "B", claude: "C",
 };
 
+function claudeRunState(task: Task) {
+  if (task.assignee !== "claude" || task.status !== "in_progress") return "idle";
+  if (!task.triggered_at && !task.last_activity_at) return "stale";
+  return "working";
+}
+
 export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,9 +166,13 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
       });
       const data = await res.json();
       if (res.ok) {
-        const updates = { status: "in_progress" as Task["status"], triggered_at: new Date().toISOString() };
+        const updates = {
+          status: (data.status || "in_progress") as Task["status"],
+          triggered_at: data.triggered_at || new Date().toISOString(),
+        };
         setTasks((prev) => prev.map((t) => (t.id === runTaskId ? { ...t, ...updates } : t)));
         if (selectedTask?.id === runTaskId) setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
+        load();
       } else {
         alert(`Error: ${data.error}`);
       }
@@ -488,9 +498,14 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                           {task.project}
                         </span>
                       )}
-                      {task.assignee === "claude" && task.status === "in_progress" && (
+                      {claudeRunState(task) === "working" && (
                         <span className="text-xs px-1 py-0.5 rounded animate-pulse" style={{ background: "#d9770620", color: "#d97706" }}>
                           working…
+                        </span>
+                      )}
+                      {claudeRunState(task) === "stale" && (
+                        <span className="text-xs px-1 py-0.5 rounded" style={{ background: "#f8514920", color: "#f85149" }}>
+                          needs run
                         </span>
                       )}
                       <div className="ml-auto">
@@ -658,7 +673,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     opacity: (triggering || selectedTask.status === "done") ? 0.5 : 1,
                   }}
                 >
-                  {triggering ? "Triggering…" : selectedTask.status === "in_progress" ? "⟳ Re-trigger" : "▶ Run Now"}
+                  {triggering ? "Triggering..." : claudeRunState(selectedTask) === "working" ? "Re-trigger" : "Run Now"}
                 </button>
                 <button
                   onClick={() => updateTask(selectedTask.id, { status: "done" })}

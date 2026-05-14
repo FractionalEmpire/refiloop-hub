@@ -63,7 +63,7 @@ export async function POST(
 
   const { data: afterDispatch } = await supabase
     .from("collab_tasks")
-    .select("status")
+    .select("status, triggered_at")
     .eq("id", id)
     .single();
 
@@ -72,6 +72,7 @@ export async function POST(
   return NextResponse.json({
     ok: true,
     status: afterDispatch?.status || "unknown",
+    triggered_at: afterDispatch?.triggered_at || null,
     message: "Claude is on it. Evidence will appear in task notes when done.",
   });
 }

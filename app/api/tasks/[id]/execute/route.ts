@@ -419,7 +419,11 @@ Get started.`;
         break;
       }
 
-      if (response.stop_reason !== "tool_use") break;
+      if (response.stop_reason !== "tool_use") {
+        await appendTaskTrace(id, `⚠️ Claude stopped with stop_reason=${response.stop_reason ?? "unknown"} before finishing.`);
+        await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
+        break;
+      }
 
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const block of response.content) {

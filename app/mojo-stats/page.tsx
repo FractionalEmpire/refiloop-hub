@@ -703,8 +703,8 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
       <div className="p-8 max-w-7xl">
         <div className="mb-6 flex items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold" style={{ color: "#f97316" }}>Mojo Stats</h1>
-            <p className="mt-1 text-sm" style={{ color: "#f97316" }}>
+            <h1 className="text-2xl font-semibold" style={{ color: "#ef4444" }}>Mojo Stats</h1>
+            <p className="mt-1 text-sm" style={{ color: "#ef4444" }}>
               Session results, call outcomes, and recording review from Supabase.
             </p>
           </div>

@@ -42,6 +42,7 @@ type MojoPushHistoryItem = {
   email_count: number | null;
   loan_amount: string | null;
   maturity_date: string | null;
+  debug_log: string | null;
 };
 
 type CallAttempt = {
@@ -219,7 +220,7 @@ async function fetchSyncBatches(): Promise<SyncBatch[]> {
 async function fetchMojoPushHistory(): Promise<MojoPushHistoryItem[]> {
   const { data, error } = await supabase
     .from("mojo_push_history")
-    .select("id,owner_id,pushed_at,list_name,source,batch_id,selected_rows,imported_rows,push_status,error,display_name,row_status,reason,phone_count,email_count,loan_amount,maturity_date")
+    .select("id,owner_id,pushed_at,list_name,source,batch_id,selected_rows,imported_rows,push_status,error,display_name,row_status,reason,phone_count,email_count,loan_amount,maturity_date,debug_log")
     .order("pushed_at", { ascending: false })
     .limit(20);
   if (error) throw error;
@@ -790,6 +791,16 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                     <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
                       {note}
                     </div>
+                    {item.debug_log && (
+                      <details className="mt-2 rounded-md border px-3 py-2 text-xs" style={{ background: "#0d1117", borderColor: "#30363d" }}>
+                        <summary className="cursor-pointer select-none font-medium" style={{ color: "#8b949e" }}>
+                          View VPS log excerpt
+                        </summary>
+                        <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-4" style={{ color: "#c9d1d9" }}>
+                          {item.debug_log}
+                        </pre>
+                      </details>
+                    )}
                   </div>
                 );
               })

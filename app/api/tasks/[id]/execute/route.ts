@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/lib/supabase";
+import { appendTaskTrace, envStatus } from "@/lib/task-trace";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -11,6 +12,7 @@ const GITHUB_OWNER = process.env.GITHUB_OWNER || "FractionalEmpire";
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+let defaultTaskBranch = "main";
 
 const tools: Anthropic.Tool[] = [
   {
@@ -36,9 +38,25 @@ const tools: Anthropic.Tool[] = [
         path: { type: "string" },
         content: { type: "string", description: "Full file content (UTF-8)" },
         message: { type: "string", description: "Commit message (will be prefixed with [Claude])" },
-        branch: { type: "string", description: "Branch to commit to (default: main). Use this when the task specifies a branch." },
+        branch: { type: "string", description: "Branch to commit to (default: hub-david-review for Hub tasks, client-review-skip-trace for skip-trace UI). Use this when the task specifies a branch." },
       },
       required: ["repo", "path", "content", "message"],
+    },
+  },
+  {
+    name: "github_replace_text",
+    description: "Replace exact text in a GitHub file and commit it. Use this for small targeted edits instead of rewriting an entire file.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        repo: { type: "string" },
+        path: { type: "string" },
+        old_text: { type: "string", description: "Exact text currently in the file" },
+        new_text: { type: "string", description: "Replacement text" },
+        message: { type: "string", description: "Commit message (will be prefixed with [Claude])" },
+        branch: { type: "string", description: "Branch to commit to (default: current task branch)" },
+      },
+      required: ["repo", "path", "old_text", "new_text", "message"],
     },
   },
   {
@@ -142,16 +160,10 @@ const verifyTools: Anthropic.Tool[] = [
   },
 ];
 
-async function appendNote(taskId: string, note: string) {
-  const { data } = await supabase.from("collab_tasks").select("notes").eq("id", taskId).single();
-  const prev = data?.notes || "";
-  const stamped = `[${new Date().toISOString()}] ${note}`;
-  const updated = prev ? `${prev}\n\n${stamped}` : stamped;
-  await supabase
-    .from("collab_tasks")
-    .update({ notes: updated, updated_at: new Date().toISOString() })
-    .eq("id", taskId);
-  return updated;
+function extractTaskBranch(task: { context?: string | null; notes?: string | null }) {
+  const text = [task.context, task.notes].filter(Boolean).join("\n");
+  const match = text.match(/(?:^|\n)\s*(?:branch|git branch)\s*[:=]\s*([A-Za-z0-9._/-]+)/i);
+  return match?.[1]?.trim() || "main";
 }
 
 async function postSlack(text: string) {
@@ -163,7 +175,8 @@ async function postSlack(text: string) {
   }).catch(() => {});
 }
 
-async function githubReadFile(repo: string, path: string, ref = "main"): Promise<string> {
+async function githubReadFile(repo: string, path: string, ref = defaultTaskBranch): Promise<string> {
+  if (!GITHUB_TOKEN) return "GitHub token is missing in executor env.";
   const url = `https://api.github.com/repos/${GITHUB_OWNER}/${repo}/contents/${path}?ref=${ref}`;
   const res = await fetch(url, {
     headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" },
@@ -234,12 +247,12 @@ async function runTool(
 ): Promise<{ result: string; terminal?: boolean }> {
   switch (name) {
     case "github_read_file": {
-      const content = await githubReadFile(input.repo, input.path, input.ref);
+      const content = await githubReadFile(input.repo, input.path, input.ref || defaultTaskBranch);
       return { result: content };
     }
 
     case "github_write_file": {
-      const branch = input.branch || "main";
+      const branch = input.branch || defaultTaskBranch;
       let sha: string | undefined;
       const existing = await fetch(
         `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${branch}`,
@@ -275,8 +288,45 @@ async function runTool(
       return { result: `Committed to ${branch}: ${data.commit.html_url}` };
     }
 
+    case "github_replace_text": {
+      const branch = input.branch || defaultTaskBranch;
+      const existing = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${branch}`,
+        { headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" } }
+      );
+      if (!existing.ok) return { result: `HTTP ${existing.status}: ${await existing.text()}` };
+
+      const existingData = await existing.json() as { sha: string; content: string };
+      const content = Buffer.from(existingData.content, "base64").toString("utf-8");
+      if (!content.includes(input.old_text)) {
+        return { result: `Exact old_text was not found in ${input.path}. Read the file and try a narrower exact replacement.` };
+      }
+
+      const updated = content.replace(input.old_text, input.new_text);
+      const res = await fetch(
+        `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `token ${GITHUB_TOKEN}`,
+            "Content-Type": "application/json",
+            Accept: "application/vnd.github.v3+json",
+          },
+          body: JSON.stringify({
+            message: `[Claude] ${input.message}`,
+            content: Buffer.from(updated).toString("base64"),
+            branch,
+            sha: existingData.sha,
+          }),
+        }
+      );
+      if (!res.ok) return { result: `HTTP ${res.status}: ${await res.text()}` };
+      const data = await res.json() as { commit: { html_url: string } };
+      return { result: `Replaced text and committed to ${branch}: ${data.commit.html_url}` };
+    }
+
     case "github_list_files": {
-      const ref = input.ref || "main";
+      const ref = input.ref || defaultTaskBranch;
       const url = `https://api.github.com/repos/${GITHUB_OWNER}/${input.repo}/contents/${input.path}?ref=${ref}`;
       const res = await fetch(url, {
         headers: { Authorization: `token ${GITHUB_TOKEN}`, Accept: "application/vnd.github.v3+json" },
@@ -314,18 +364,18 @@ async function runTool(
     }
 
     case "log_progress": {
-      await appendNote(taskId, input.note);
+      await appendTaskTrace(taskId, input.note);
       return { result: "Progress logged." };
     }
 
     case "complete_task": {
       // Don't set done yet — return the summary for the verify step
-      await appendNote(taskId, `📋 EXECUTOR SUMMARY\n${input.summary}`);
+      await appendTaskTrace(taskId, `📋 EXECUTOR SUMMARY\n${input.summary}`);
       return { result: "__COMPLETE__:" + input.summary, terminal: true };
     }
 
     case "mark_blocked": {
-      await appendNote(taskId, `🚫 BLOCKED: ${input.reason}`);
+      await appendTaskTrace(taskId, `🚫 BLOCKED: ${input.reason}`);
       await supabase.from("collab_tasks").update({
         status: "blocked",
         updated_at: new Date().toISOString(),
@@ -339,13 +389,8 @@ async function runTool(
   }
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const { id } = params;
-  const reqBody = await req.json().catch(() => ({}));
-  const model = reqBody.model || "claude-sonnet-4-6";
+export async function runClaudeTask(id: string, model = "claude-sonnet-4-6") {
+  const env = envStatus();
 
   const { data: task, error } = await supabase
     .from("collab_tasks")
@@ -354,6 +399,16 @@ export async function POST(
     .single();
 
   if (error || !task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  const taskBranch = extractTaskBranch(task);
+  defaultTaskBranch = taskBranch;
+
+  await appendTaskTrace(
+    id,
+    `Executor start: branch=${taskBranch}, model=${model}, env anthropic=${env.anthropic}, github=${env.github}, internal_api_key=${env.internalApiKey}, supabase_url=${env.supabaseUrl}, supabase_service_key=${env.supabaseServiceKey}`
+  );
+  if (!env.anthropic || !env.github || !env.supabaseUrl || !env.supabaseServiceKey) {
+    await appendTaskTrace(id, "Executor env check failed. One or more required credentials are missing.");
+  }
 
   const systemPrompt = `You are Claude, an autonomous AI agent for RefiLoop (commercial mortgage brokerage). You have been assigned a task and must complete it without human help.
 
@@ -363,14 +418,15 @@ Key repos:
 - refiloop2: Main config repo with docs, supabase functions, scripts.
 
 Deployment context (IMPORTANT — default branches):
-- refiloop-hub: commit to main (Vercel auto-deploys)
+- refiloop-hub: commit to main unless the task explicitly says another branch
 - skip-trace-ui / any task mentioning skip trace UI: commit to branch client-review-skip-trace (production is promoted from preview builds of that branch, NOT main)
-- If the task description specifies a branch field, always use that branch.
+- If the task context or notes specify a branch field, always use that branch.
+- If no branch is specified, default to ${taskBranch}.
 
 Rules:
 1. Start by calling log_progress with your understanding of the task and your plan. If the task specifies a file path, use it directly — do not search.
 2. When you need to read multiple files, call github_read_file for all of them in the same step — do not read one at a time sequentially. This saves iterations.
-3. Make minimal changes. Read the file, apply only the necessary edits, write back the complete file. Never rewrite a file from scratch when a small targeted change will do — this saves tokens and avoids timeouts.
+3. Make minimal changes. For small edits, prefer github_replace_text with exact old/new snippets. Only use github_write_file when you truly need to rewrite the whole file.
 4. Call log_progress frequently to show your work.
 5. Always end with complete_task (success) or mark_blocked (can't finish).
 6. The complete_task summary is what David sees — include commit URLs, what changed, and proof it works.`;
@@ -405,12 +461,16 @@ Get started.`;
       messages.push({ role: "assistant", content: response.content });
 
       if (response.stop_reason === "end_turn") {
-        await appendNote(id, "⚠️ Claude stopped without calling complete_task or mark_blocked.");
+        await appendTaskTrace(id, "⚠️ Claude stopped without calling complete_task or mark_blocked.");
         await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
         break;
       }
 
-      if (response.stop_reason !== "tool_use") break;
+      if (response.stop_reason !== "tool_use") {
+        await appendTaskTrace(id, `⚠️ Claude stopped with stop_reason=${response.stop_reason ?? "unknown"} before finishing.`);
+        await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
+        break;
+      }
 
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const block of response.content) {
@@ -428,19 +488,20 @@ Get started.`;
 
       // Heartbeat — lets the hub detect if Claude is still working vs hung
       await supabase.from("collab_tasks").update({ last_activity_at: new Date().toISOString() }).eq("id", id);
+      await appendTaskTrace(id, `Heartbeat after iteration ${iterations}.`);
       messages.push({ role: "user", content: toolResults });
     }
 
     if (!done && iterations >= MAX) {
-      await appendNote(id, "⚠️ Hit max iterations without finishing.");
+      await appendTaskTrace(id, "⚠️ Hit max iterations without finishing.");
       await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
     }
 
     // Verify step — only runs when executor called complete_task
     if (completionSummary) {
-      await appendNote(id, "🔍 Verifying...");
+      await appendTaskTrace(id, "🔍 Verifying...");
       const verify = await runVerify(id, task, completionSummary);
-      await appendNote(id, `${verify.pass ? "✅" : "❌"} VERIFICATION ${verify.pass ? "PASSED" : "FAILED"}\n${verify.reason}`);
+      await appendTaskTrace(id, `${verify.pass ? "✅" : "❌"} VERIFICATION ${verify.pass ? "PASSED" : "FAILED"}\n${verify.reason}`);
       if (verify.pass) {
         await supabase.from("collab_tasks").update({
           status: "done",
@@ -449,16 +510,36 @@ Get started.`;
         }).eq("id", id);
         await postSlack(`✅ *Task completed & verified*\n*${task.title}*\n${completionSummary}`);
       } else {
-        await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
-        await postSlack(`❌ *Task failed verification*\n*${task.title}*\n${verify.reason}`);
+        await appendTaskTrace(id, "Verifier could not confirm the work. The executor completed, so this is marked ready for review instead of blocked.");
+        await supabase.from("collab_tasks").update({
+          status: "done",
+          ready_for_review: true,
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq("id", id);
+        await postSlack(`Task completed but needs review\n*${task.title}*\n${verify.reason}`);
       }
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await appendNote(id, `❌ Execution error: ${msg}`);
+    await appendTaskTrace(id, `❌ Execution error: ${msg}`);
     await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
     await postSlack(`❌ *Claude task execution failed*\nTask: ${task.title}\nError: ${msg}`);
   }
 
-  return NextResponse.json({ ok: true, iterations, done, verified: !!completionSummary });
+  const { data: finalTask } = await supabase
+    .from("collab_tasks")
+    .select("status")
+    .eq("id", id)
+    .single();
+
+  return NextResponse.json({ ok: true, iterations, done, verified: !!completionSummary, status: finalTask?.status || "unknown" });
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const reqBody = await req.json().catch(() => ({}));
+  return runClaudeTask(params.id, reqBody.model || "claude-sonnet-4-6");
 }

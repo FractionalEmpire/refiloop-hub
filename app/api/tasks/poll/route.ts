@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { appendTaskTrace } from "@/lib/task-trace";
+import { runClaudeTask } from "../[id]/execute/route";
 
 export const dynamic = "force-dynamic";
 
 // Called by Vercel cron every 5 minutes (configured in vercel.json).
-// Two jobs: (1) reset stuck in_progress tasks, (2) trigger new todo tasks.
+// Two jobs: (1) mark stuck in_progress tasks as blocked, (2) trigger new todo tasks.
 const STUCK_MINUTES = 10;
 
 export async function GET(req: NextRequest) {
@@ -13,11 +15,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://refiloop-hub.vercel.app";
-  const key = process.env.INTERNAL_API_KEY || "";
+  const appUrl = new URL(req.url).origin;
   const stuckCutoff = new Date(Date.now() - STUCK_MINUTES * 60 * 1000).toISOString();
 
-  // --- Step 1: reset tasks Vercel killed mid-execution ---
+  // --- Step 1: stop tasks that only look active ---
+  // Case 0: manually moved to in_progress but never triggered. This should never show as "working".
+  const { data: unstartedInProgress } = await supabase
+    .from("collab_tasks")
+    .select("id, title")
+    .eq("assignee", "claude")
+    .eq("status", "in_progress")
+    .is("triggered_at", null)
+    .is("last_activity_at", null);
+
+  // --- Step 2: stop tasks Vercel killed mid-execution ---
   // Case A: had a heartbeat but it's stale (Vercel hit maxDuration and was killed)
   const { data: stuckWithActivity } = await supabase
     .from("collab_tasks")
@@ -35,17 +46,18 @@ export async function GET(req: NextRequest) {
     .is("last_activity_at", null)
     .lt("triggered_at", stuckCutoff);
 
-  const stuckTasks = [...(stuckWithActivity ?? []), ...(stuckNoActivity ?? [])];
+  const stuckTasks = [...(unstartedInProgress ?? []), ...(stuckWithActivity ?? []), ...(stuckNoActivity ?? [])];
   let reset = 0;
   for (const t of stuckTasks) {
     await supabase
       .from("collab_tasks")
-      .update({ status: "todo", triggered_at: null, last_activity_at: null, updated_at: new Date().toISOString() })
+      .update({ status: "blocked", triggered_at: null, last_activity_at: null, updated_at: new Date().toISOString() })
       .eq("id", t.id);
+    await appendTaskTrace(t.id, `Cron marked stale in_progress task blocked. Use Run Now to retry manually.`);
     reset++;
   }
 
-  // --- Step 2: pick up todo tasks ---
+  // --- Step 3: pick up todo tasks ---
   const { data: tasks, error } = await supabase
     .from("collab_tasks")
     .select("id, title")
@@ -61,10 +73,14 @@ export async function GET(req: NextRequest) {
       .update({ status: "in_progress", triggered_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", task.id);
 
-    fetch(`${appUrl}/api/tasks/${task.id}/execute`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-internal-key": key },
-    }).catch(() => {});
+    await appendTaskTrace(task.id, `Cron picked up todo task and is dispatching executor from ${appUrl}.`);
+    await runClaudeTask(task.id);
+    const { data: afterRun } = await supabase
+      .from("collab_tasks")
+      .select("status")
+      .eq("id", task.id)
+      .single();
+    await appendTaskTrace(task.id, `Cron executor finished. Current task status: ${afterRun?.status || "unknown"}.`);
 
     triggered++;
   }
@@ -73,7 +89,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     reset,
     triggered,
-    stuckReset: stuckTasks.map((t) => t.title),
+    stuckBlocked: stuckTasks.map((t) => t.title),
     tasks: (tasks ?? []).map((t) => t.title),
   });
 }

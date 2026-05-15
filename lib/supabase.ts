@@ -12,11 +12,12 @@ export type Task = {
   id: string;
   title: string;
   description: string | null;
-  assignee: "david" | "gorjan" | "both" | "claude";
+  assignee: "david" | "gorjan" | "both" | "claude" | "keith";
   status: "todo" | "in_progress" | "done" | "blocked";
   priority: "p0" | "p1" | "p2" | "later";
   project: string | null;
   notes: string | null;
+  context: string | null;
   type: "bug" | "feature" | "task";
   triggered_at: string | null;
   last_activity_at: string | null;

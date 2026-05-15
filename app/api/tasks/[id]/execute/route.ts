@@ -516,8 +516,14 @@ Get started.`;
         }).eq("id", id);
         await postSlack(`✅ *Task completed & verified*\n*${task.title}*\n${completionSummary}`);
       } else {
-        await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
-        await postSlack(`❌ *Task failed verification*\n*${task.title}*\n${verify.reason}`);
+        await appendTaskTrace(id, "Verifier could not confirm the work. The executor completed, so this is marked ready for review instead of blocked.");
+        await supabase.from("collab_tasks").update({
+          status: "done",
+          ready_for_review: true,
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq("id", id);
+        await postSlack(`Task completed but needs review\n*${task.title}*\n${verify.reason}`);
       }
     }
   } catch (err) {

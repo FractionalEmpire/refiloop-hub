@@ -389,13 +389,7 @@ async function runTool(
   }
 }
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const { id } = params;
-  const reqBody = await req.json().catch(() => ({}));
-  const model = reqBody.model || "claude-sonnet-4-6";
+export async function runClaudeTask(id: string, model = "claude-sonnet-4-6") {
   const env = envStatus();
 
   const { data: task, error } = await supabase
@@ -540,4 +534,12 @@ Get started.`;
     .single();
 
   return NextResponse.json({ ok: true, iterations, done, verified: !!completionSummary, status: finalTask?.status || "unknown" });
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const reqBody = await req.json().catch(() => ({}));
+  return runClaudeTask(params.id, reqBody.model || "claude-sonnet-4-6");
 }

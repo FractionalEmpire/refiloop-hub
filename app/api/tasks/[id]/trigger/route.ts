@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { appendTaskTrace } from "@/lib/task-trace";
+import { runClaudeTask } from "../execute/route";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 export async function POST(
   req: NextRequest,
@@ -13,9 +15,6 @@ export async function POST(
   const body = await req.json().catch(() => ({}));
   const model = body.model || "claude-sonnet-4-6";
   const internalKey = process.env.INTERNAL_API_KEY || "";
-  const cookie = req.headers.get("cookie") || "";
-  const authorization = req.headers.get("authorization") || "";
-  const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "";
 
   const { data: task, error } = await supabase
     .from("collab_tasks")
@@ -44,30 +43,8 @@ export async function POST(
     })
     .eq("id", id);
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-internal-key": internalKey,
-  };
-  if (cookie) headers.cookie = cookie;
-  if (authorization) headers.authorization = authorization;
-  if (bypassSecret) headers["x-vercel-protection-bypass"] = bypassSecret;
-
-  const res = await fetch(`${appUrl}/api/tasks/${id}/execute`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ model }),
-  }).catch((err) => err as Error);
-
-  if (res instanceof Error) {
-    await appendTaskTrace(id, `Trigger dispatch failed before executor response: ${res.message}`);
-    return NextResponse.json({ ok: false, error: res.message }, { status: 500 });
-  }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    await appendTaskTrace(id, `Executor endpoint returned HTTP ${res.status}: ${text || "no body"}`);
-    return NextResponse.json({ ok: false, error: `Executor failed with HTTP ${res.status}` }, { status: 500 });
-  }
+  await appendTaskTrace(id, "Calling executor directly inside the trigger route to avoid Vercel deployment protection on internal HTTP calls.");
+  await runClaudeTask(id, model);
 
   const { data: afterDispatch } = await supabase
     .from("collab_tasks")

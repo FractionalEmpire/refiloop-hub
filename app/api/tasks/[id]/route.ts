@@ -2,6 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const { id } = params;
+  const { data, error } = await supabase
+    .from("collab_tasks")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json(data);
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }

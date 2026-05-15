@@ -86,6 +86,33 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const refreshTask = useCallback(async (id: string) => {
+    const res = await fetch(`/api/tasks/${id}`, { credentials: "include" });
+    if (!res.ok) return null;
+    const task = await res.json() as Task;
+    setTasks((prev) => prev.map((t) => (t.id === id ? task : t)));
+    setSelectedTask((prev) => prev?.id === id ? task : prev);
+    return task;
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTask || selectedTask.assignee !== "claude") return;
+    if (selectedTask.status !== "in_progress" && !triggering) return;
+
+    let stopped = false;
+    const tick = async () => {
+      if (stopped) return;
+      await refreshTask(selectedTask.id);
+    };
+
+    tick();
+    const timer = window.setInterval(tick, 2500);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedTask?.id, selectedTask?.assignee, selectedTask?.status, triggering, refreshTask]);
+
   // Read ?project= URL param on mount to pre-populate filter
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -158,6 +185,14 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (!runTaskId) return;
     setShowRunModal(false);
     setTriggering(true);
+    const startedAt = new Date().toISOString();
+    const optimistic = {
+      status: "in_progress" as Task["status"],
+      triggered_at: startedAt,
+      last_activity_at: startedAt,
+    };
+    setTasks((prev) => prev.map((t) => (t.id === runTaskId ? { ...t, ...optimistic } : t)));
+    if (selectedTask?.id === runTaskId) setSelectedTask((prev) => prev ? { ...prev, ...optimistic } : null);
     try {
       const res = await fetch(`/api/tasks/${runTaskId}/trigger`, {
         method: "POST",
@@ -168,13 +203,14 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
       if (res.ok) {
         const updates = {
           status: (data.status || "in_progress") as Task["status"],
-          triggered_at: data.triggered_at || new Date().toISOString(),
+          triggered_at: data.triggered_at || startedAt,
         };
         setTasks((prev) => prev.map((t) => (t.id === runTaskId ? { ...t, ...updates } : t)));
         if (selectedTask?.id === runTaskId) setSelectedTask((prev) => prev ? { ...prev, ...updates } : null);
-        load();
+        await refreshTask(runTaskId);
       } else {
         alert(`Error: ${data.error}`);
+        await refreshTask(runTaskId);
       }
     } finally {
       setTriggering(false);

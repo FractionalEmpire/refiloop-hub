@@ -41,6 +41,7 @@ type MojoPushHistoryItem = {
   email_count: number | null;
   loan_amount: string | null;
   maturity_date: string | null;
+  debug_log: string | null;
 };
 
 type MojoPushBatch = {
@@ -55,6 +56,7 @@ type MojoPushBatch = {
   failed: number;
   total: number;
   note: string;
+  debug_log: string | null;
 };
 
 type CallAttempt = {
@@ -232,7 +234,7 @@ async function fetchSyncBatches(): Promise<SyncBatch[]> {
 async function fetchMojoPushHistory(): Promise<MojoPushHistoryItem[]> {
   const { data, error } = await supabase
     .from("mojo_push_history")
-    .select("id,owner_id,pushed_at,list_name,source,batch_id,selected_rows,imported_rows,push_status,error,display_name,row_status,reason,phone_count,email_count,loan_amount,maturity_date")
+    .select("id,owner_id,pushed_at,list_name,source,batch_id,selected_rows,imported_rows,push_status,error,display_name,row_status,reason,phone_count,email_count,loan_amount,maturity_date,debug_log")
     .order("pushed_at", { ascending: false })
     .limit(500);
   if (error) throw error;
@@ -335,6 +337,7 @@ function buildPushBatches(rows: MojoPushHistoryItem[]): MojoPushBatch[] {
       failed: 0,
       total: 0,
       note: item.error ?? item.reason ?? "No additional note",
+      debug_log: item.debug_log,
     };
 
     batch.pushed_at = item.pushed_at > batch.pushed_at ? item.pushed_at : batch.pushed_at;
@@ -776,11 +779,11 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                   {pushBatches.slice(0, 6).map((batch) => {
                     const status = batch.failed > 0 ? "failed" : batch.skipped > 0 ? "skipped" : "sent";
                     return (
-                      <div key={batch.key} className="rounded-md border p-3" style={{ background: "#0d1117", borderColor: "#30363d" }}>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-xs font-semibold" style={{ color: pushStatusColor(status) }}>
-                            {batch.failed > 0 ? "needs review" : "logged"}
-                          </span>
+                <div key={batch.key} className="rounded-md border p-3" style={{ background: "#0d1117", borderColor: "#30363d" }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-semibold" style={{ color: pushStatusColor(status) }}>
+                      {batch.failed > 0 ? "needs review" : "logged"}
+                    </span>
                           <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(batch.pushed_at)}</span>
                         </div>
                         <div className="mt-2 text-sm font-semibold" style={{ color: "#e6edf3" }}>
@@ -788,13 +791,28 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                         </div>
                         <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
                           {fmtCount(batch.sent)} sent - {fmtCount(batch.skipped)} skipped - {fmtCount(batch.failed)} failed - {fmtCount(batch.total)} logged rows
-                        </div>
-                        <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
-                          {batch.list_name || "No list name"}{batch.batch_id ? ` - batch ${batch.batch_id}` : ""}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  </div>
+                  <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
+                    {batch.list_name || "No list name"}{batch.batch_id ? ` - batch ${batch.batch_id}` : ""}
+                  </div>
+                  {batch.failed > 0 && batch.note && (
+                    <div className="mt-2 text-xs" style={{ color: "#f85149" }}>
+                      Failed: {batch.note}
+                    </div>
+                  )}
+                  {batch.debug_log && (
+                    <details className="mt-2 rounded-md border px-3 py-2 text-xs" style={{ background: "#161b22", borderColor: "#30363d" }}>
+                      <summary className="cursor-pointer select-none font-medium" style={{ color: "#8b949e" }}>
+                        View VPS log excerpt
+                      </summary>
+                      <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-4" style={{ color: "#c9d1d9" }}>
+                        {batch.debug_log}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              );
+                })}
                 </div>
                 {pushHistory.slice(0, 12).map((item) => {
                 const label = item.display_name ?? `Owner ${item.owner_id}`;
@@ -819,6 +837,16 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                     <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
                       {note}
                     </div>
+                    {item.debug_log && (
+                      <details className="mt-2 rounded-md border px-3 py-2 text-xs" style={{ background: "#161b22", borderColor: "#30363d" }}>
+                        <summary className="cursor-pointer select-none font-medium" style={{ color: "#8b949e" }}>
+                          View VPS log excerpt
+                        </summary>
+                        <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-4" style={{ color: "#c9d1d9" }}>
+                          {item.debug_log}
+                        </pre>
+                      </details>
+                    )}
                   </div>
                 );
                 })}

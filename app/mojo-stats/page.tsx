@@ -693,12 +693,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     <AppShell user={user}>
       <div className="p-8 max-w-7xl">
         <div className="mb-6 flex items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold" style={{ color: "#e6edf3" }}>Mojo Stats</h1>
-            <p className="mt-1 text-sm" style={{ color: "#8b949e" }}>
-              Session results, call outcomes, and recording review from Supabase.
-            </p>
-          </div>
+          <MojoStatsHeader />
         </div>
 
         <div className="mb-6 rounded-lg border px-4 py-3 text-sm" style={{ background: "#10243a", borderColor: "#1f6feb", color: "#c9d1d9" }}>

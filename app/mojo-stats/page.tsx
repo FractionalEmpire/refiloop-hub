@@ -697,14 +697,16 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const totalPages = Math.max(1, Math.ceil(calls.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedCalls = calls.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const headerColors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#58a6ff", "#a371f7", "#ec4899"];
+  const headerColor = headerColors[Math.floor(Math.random() * headerColors.length)];
 
   return (
     <AppShell user={user}>
       <div className="p-8 max-w-7xl">
         <div className="mb-6 flex items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold" style={{ color: "#ef4444" }}>Mojo Stats</h1>
-            <p className="mt-1 text-sm" style={{ color: "#ef4444" }}>
+            <h1 className="text-2xl font-semibold" style={{ color: headerColor }}>Mojo Stats</h1>
+            <p className="mt-1 text-sm" style={{ color: headerColor }}>
               Session results, call outcomes, and recording review from Supabase.
             </p>
           </div>

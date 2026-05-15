@@ -544,6 +544,11 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                           needs run
                         </span>
                       )}
+                      {task.assignee === "claude" && task.status === "blocked" && (
+                        <span className="text-xs px-1 py-0.5 rounded animate-pulse" style={{ background: "#f8514920", color: "#f85149" }}>
+                          error
+                        </span>
+                      )}
                       <div className="ml-auto">
                         <div
                           className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"

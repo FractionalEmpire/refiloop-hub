@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import ForecastClient from "./ForecastClient";
+import MojoStatsHeader from "./MojoStatsHeader";
 
 export const dynamic = "force-dynamic";
 

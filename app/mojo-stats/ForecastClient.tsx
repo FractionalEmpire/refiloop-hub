@@ -78,13 +78,13 @@ export default function ForecastClient({
   remainingPool,
   alreadyCalled,
 }: Props) {
-  // Live rates â fall back to XLS-derived defaults if Supabase data is thin
+  // Live rates - fall back to XLS-derived defaults if Supabase data is thin
   const liveConnectRate = liveUniqueContacted >= 30
     ? Math.round((liveConnects / liveUniqueContacted) * 100)
-    : 20; // XLS baseline: ~90 connects / 458 unique â 20%
+    : 20; // XLS baseline: ~90 connects / 458 unique ~= 20%
   const liveLeadRate = liveConnects >= 20
     ? Math.round((liveLeads / liveConnects) * 100)
-    : 9;  // XLS baseline: ~8 leads / 90 connects â 9%
+    : 9;  // XLS baseline: ~8 leads / 90 connects ~= 9%
 
   const avgDialsPerPerson = liveUniqueContacted > 0
     ? parseFloat((liveDialsTotal / liveUniqueContacted).toFixed(1))
@@ -171,7 +171,7 @@ export default function ForecastClient({
             color="#2ea043"
           />
           <Slider
-            label="Lead conversion (connects â leads)"
+            label="Lead conversion (connects to leads)"
             value={leadRate}
             min={1}
             max={50}
@@ -202,11 +202,11 @@ export default function ForecastClient({
             </div>
             <div className="flex justify-between">
               <span style={{ color: "#484f58" }}>Avg dials per person</span>
-              <span className="font-mono" style={{ color: "#c9d1d9" }}>{avgDialsPerPerson}Ã</span>
+              <span className="font-mono" style={{ color: "#c9d1d9" }}>{avgDialsPerPerson}x</span>
             </div>
             {!dataSufficient && (
               <div className="mt-1 pt-1 border-t text-[10px]" style={{ borderColor: "#21262d", color: "#484f58" }}>
-                â  Sync data still building â sliders default to XLS-derived baselines (connect 20%, lead 9%)
+                Sync data still building - sliders default to XLS-derived baselines (connect 20%, lead 9%)
               </div>
             )}
           </div>
@@ -225,7 +225,7 @@ export default function ForecastClient({
             <StatBox
               label="Time to complete"
               value={`${weeks}w`}
-              sub={`${months} months Â· ${workingDays} days`}
+              sub={`${months} months / ${workingDays} days`}
               color="#58a6ff"
             />
             <StatBox
@@ -237,7 +237,7 @@ export default function ForecastClient({
             <StatBox
               label="Total dials needed"
               value={totalDials.toLocaleString()}
-              sub={`${avgDialsPerPerson}Ã per person`}
+              sub={`${avgDialsPerPerson}x per person`}
               color="#a371f7"
             />
           </div>

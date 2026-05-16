@@ -147,7 +147,9 @@ function inputDate(date: Date) {
 }
 
 function defaultStartDate() {
-  return inputDate(new Date());
+  const date = new Date();
+  date.setDate(date.getDate() - 1);
+  return inputDate(date);
 }
 
 function normalizeFilters(params: SearchParams) {
@@ -390,13 +392,13 @@ function RecentCallsCard({ calls }: { calls: DisplayCall[] }) {
                 <div className="min-w-0">
                   <div className="truncate text-xs font-semibold" style={{ color: "#e6edf3" }}>{call.target_name}</div>
                   <div className="truncate text-[11px]" style={{ color: "#8b949e" }}>
-                    {call.agent_name} Â· {call.phone_number ?? "Unknown phone"}
+                    {call.agent_name} / {call.phone_number ?? "Unknown phone"}
                   </div>
                 </div>
                 <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</span>
               </div>
               <div className="mt-1 text-xs" style={{ color: "#c9d1d9" }}>
-                {formatDisposition(call.disposition)} Â· {fmtCount(call.total_call_attempts)} attempts
+                {formatDisposition(call.disposition)} / {fmtCount(call.total_call_attempts)} attempts
               </div>
             </div>
           ))
@@ -465,7 +467,7 @@ function parseDurationSeconds(value: string | null | undefined) {
 }
 
 function isConnectedCall(call: DisplayCall) {
-  // Exclude synthetic recording-only rows â they aren't real "connected" calls,
+  // Exclude synthetic recording-only rows - they aren't real "connected" calls,
   // they're just recordings without a matching call_attempt. Counting them here
   // caused Connected === Recordings.
   if (call.source === "mojo_recording") return false;
@@ -717,7 +719,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                 style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}
                 title="Refresh data"
               >
-                â» Refresh
+                Refresh
               </a>
               <div className="rounded-full border px-3 py-1 text-[11px] font-medium" style={{ background: "#0d1117", color: "#8b949e", borderColor: "#30363d" }}>
                 {fmtCount(callsToday.length)} calls today
@@ -826,8 +828,8 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                     </div>
                     <div className="mt-1 text-xs" style={{ color: "#8b949e" }}>
                       {fmtCount(item.selected_rows)} selected, {fmtCount(item.imported_rows)} imported
-                      {item.list_name ? ` Â· ${item.list_name}` : ""}
-                      {item.batch_id ? ` Â· batch ${item.batch_id}` : ""}
+                      {item.list_name ? ` / ${item.list_name}` : ""}
+                      {item.batch_id ? ` / batch ${item.batch_id}` : ""}
                     </div>
                     <div className="mt-1 text-xs" style={{ color: "#484f58" }}>
                       {note}

@@ -12,7 +12,7 @@ const GITHUB_OWNER = process.env.GITHUB_OWNER || "FractionalEmpire";
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-let defaultTaskBranch = "main";
+let defaultTaskBranch = "hub-david-review";
 
 const tools: Anthropic.Tool[] = [
   {
@@ -23,7 +23,7 @@ const tools: Anthropic.Tool[] = [
       properties: {
         repo: { type: "string", description: "Repository name, e.g. refiloop-hub or refiloop2" },
         path: { type: "string", description: "File path, e.g. app/tasks/TasksClient.tsx" },
-        ref: { type: "string", description: "Branch (default: main)" },
+        ref: { type: "string", description: "Branch (default: current task branch)" },
       },
       required: ["repo", "path"],
     },
@@ -141,7 +141,7 @@ const verifyTools: Anthropic.Tool[] = [
       properties: {
         repo: { type: "string" },
         path: { type: "string" },
-        ref: { type: "string", description: "Branch (default: main)" },
+        ref: { type: "string", description: "Branch (default: current task branch)" },
       },
       required: ["repo", "path"],
     },
@@ -163,7 +163,7 @@ const verifyTools: Anthropic.Tool[] = [
 function extractTaskBranch(task: { context?: string | null; notes?: string | null }) {
   const text = [task.context, task.notes].filter(Boolean).join("\n");
   const match = text.match(/(?:^|\n)\s*(?:branch|git branch)\s*[:=]\s*([A-Za-z0-9._/-]+)/i);
-  return match?.[1]?.trim() || "main";
+  return match?.[1]?.trim() || "hub-david-review";
 }
 
 async function postSlack(text: string) {
@@ -192,7 +192,7 @@ async function runVerify(
   summary: string
 ): Promise<{ pass: boolean; reason: string }> {
   const verifySystem = `You are a code reviewer verifying that an AI agent completed a task correctly.
-Check that the work actually happened — don't just trust the summary. Read one key changed file if needed.
+Check that the work actually happened - don't just trust the summary. Read one key changed file if needed.
 Be practical: minor style issues are fine. Fail only if the core requirement is missing or broken.`;
 
   const verifyPrompt = `Task: ${task.title}
@@ -236,7 +236,7 @@ Verify this is genuinely done. If files were changed, read one key file to confi
     }
   }
 
-  // Verify loop ended without a verdict — default to pass so good work isn't blocked
+  // Verify loop ended without a verdict - default to pass so good work isn't blocked
   return { pass: true, reason: "Verification completed without finding issues." };
 }
 
@@ -333,7 +333,7 @@ async function runTool(
       });
       if (!res.ok) return { result: `HTTP ${res.status}: ${await res.text()}` };
       const data = await res.json() as Array<{ name: string; type: string; path: string }>;
-      return { result: data.map((f) => `${f.type === "dir" ? "📁" : "📄"} ${f.path}`).join("\n") };
+      return { result: data.map((f) => `${f.type === "dir" ? "[dir]" : "[file]"} ${f.path}`).join("\n") };
     }
 
     case "query_supabase": {
@@ -369,18 +369,18 @@ async function runTool(
     }
 
     case "complete_task": {
-      // Don't set done yet — return the summary for the verify step
-      await appendTaskTrace(taskId, `📋 EXECUTOR SUMMARY\n${input.summary}`);
+      // Don't set done yet - return the summary for the verify step
+      await appendTaskTrace(taskId, `EXECUTOR SUMMARY\n${input.summary}`);
       return { result: "__COMPLETE__:" + input.summary, terminal: true };
     }
 
     case "mark_blocked": {
-      await appendTaskTrace(taskId, `🚫 BLOCKED: ${input.reason}`);
+      await appendTaskTrace(taskId, `BLOCKED: ${input.reason}`);
       await supabase.from("collab_tasks").update({
         status: "blocked",
         updated_at: new Date().toISOString(),
       }).eq("id", taskId);
-      await postSlack(`🚫 *Claude hit a blocker*\n${input.reason}`);
+      await postSlack(`Claude hit a blocker\n${input.reason}`);
       return { result: "Task marked blocked.", terminal: true };
     }
 
@@ -417,24 +417,25 @@ Key repos:
 - refiloop-hub: Internal ops hub (Next.js on Vercel). API routes in app/api/, pages in app/, components in components/, types in lib/.
 - refiloop2: Main config repo with docs, supabase functions, scripts.
 
-Deployment context (IMPORTANT — default branches):
-- refiloop-hub: commit to main unless the task explicitly says another branch
+Deployment context (IMPORTANT - default branches):
+- refiloop-hub: commit to hub-david-review unless the task explicitly says branch: main or production/main.
+- Do not commit Hub tasks to main by default. Main is production and must be opt-in.
 - skip-trace-ui / any task mentioning skip trace UI: commit to branch client-review-skip-trace (production is promoted from preview builds of that branch, NOT main)
 - If the task context or notes specify a branch field, always use that branch.
 - If no branch is specified, default to ${taskBranch}.
 
 Rules:
-1. Start by calling log_progress with your understanding of the task and your plan. If the task specifies a file path, use it directly — do not search.
-2. When you need to read multiple files, call github_read_file for all of them in the same step — do not read one at a time sequentially. This saves iterations.
+1. Start by calling log_progress with your understanding of the task and your plan. If the task specifies a file path, use it directly - do not search.
+2. When you need to read multiple files, call github_read_file for all of them in the same step - do not read one at a time sequentially. This saves iterations.
 3. Make minimal changes. For small edits, prefer github_replace_text with exact old/new snippets. Only use github_write_file when you truly need to rewrite the whole file.
 4. Call log_progress frequently to show your work.
 5. Always end with complete_task (success) or mark_blocked (can't finish).
-6. The complete_task summary is what David sees — include commit URLs, what changed, and proof it works.`;
+6. The complete_task summary is what David sees - include commit URLs, what changed, and proof it works.`;
 
   const userContent = `Complete this task:
 
 **Title:** ${task.title}
-**Description:** ${task.description || "(none — use the title to infer what's needed)"}
+**Description:** ${task.description || "(none - use the title to infer what's needed)"}
 **Project:** ${task.project || "RefiLoop Hub"}
 **Priority:** ${task.priority}
 **Existing notes:** ${task.notes || "(none)"}${task.context ? `\n**Context (file paths, branch, etc.):** ${task.context}` : ""}
@@ -445,7 +446,7 @@ Get started.`;
   let done = false;
   let completionSummary: string | null = null;
   let iterations = 0;
-  const MAX = 12; // 20 was too aggressive — vercel maxDuration=300s needs headroom for verify step
+  const MAX = 12; // 20 was too aggressive - vercel maxDuration=300s needs headroom for verify step
 
   try {
     while (!done && iterations < MAX) {
@@ -461,13 +462,13 @@ Get started.`;
       messages.push({ role: "assistant", content: response.content });
 
       if (response.stop_reason === "end_turn") {
-        await appendTaskTrace(id, "⚠️ Claude stopped without calling complete_task or mark_blocked.");
+        await appendTaskTrace(id, "WARNING: Claude stopped without calling complete_task or mark_blocked.");
         await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
         break;
       }
 
       if (response.stop_reason !== "tool_use") {
-        await appendTaskTrace(id, `⚠️ Claude stopped with stop_reason=${response.stop_reason ?? "unknown"} before finishing.`);
+        await appendTaskTrace(id, `WARNING: Claude stopped with stop_reason=${response.stop_reason ?? "unknown"} before finishing.`);
         await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
         break;
       }
@@ -486,29 +487,29 @@ Get started.`;
         if (result.terminal) { done = true; break; }
       }
 
-      // Heartbeat — lets the hub detect if Claude is still working vs hung
+      // Heartbeat - lets the hub detect if Claude is still working vs hung
       await supabase.from("collab_tasks").update({ last_activity_at: new Date().toISOString() }).eq("id", id);
       await appendTaskTrace(id, `Heartbeat after iteration ${iterations}.`);
       messages.push({ role: "user", content: toolResults });
     }
 
     if (!done && iterations >= MAX) {
-      await appendTaskTrace(id, "⚠️ Hit max iterations without finishing.");
+      await appendTaskTrace(id, "WARNING: Hit max iterations without finishing.");
       await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
     }
 
-    // Verify step — only runs when executor called complete_task
+    // Verify step - only runs when executor called complete_task
     if (completionSummary) {
-      await appendTaskTrace(id, "🔍 Verifying...");
+      await appendTaskTrace(id, "Verifying...");
       const verify = await runVerify(id, task, completionSummary);
-      await appendTaskTrace(id, `${verify.pass ? "✅" : "❌"} VERIFICATION ${verify.pass ? "PASSED" : "FAILED"}\n${verify.reason}`);
+      await appendTaskTrace(id, `VERIFICATION ${verify.pass ? "PASSED" : "FAILED"}\n${verify.reason}`);
       if (verify.pass) {
         await supabase.from("collab_tasks").update({
           status: "done",
           completed_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }).eq("id", id);
-        await postSlack(`✅ *Task completed & verified*\n*${task.title}*\n${completionSummary}`);
+        await postSlack(`Task completed & verified\n*${task.title}*\n${completionSummary}`);
       } else {
         await appendTaskTrace(id, "Verifier could not confirm the work. The executor completed, so this is marked ready for review instead of blocked.");
         await supabase.from("collab_tasks").update({
@@ -522,9 +523,9 @@ Get started.`;
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await appendTaskTrace(id, `❌ Execution error: ${msg}`);
+    await appendTaskTrace(id, `Execution error: ${msg}`);
     await supabase.from("collab_tasks").update({ status: "blocked", updated_at: new Date().toISOString() }).eq("id", id);
-    await postSlack(`❌ *Claude task execution failed*\nTask: ${task.title}\nError: ${msg}`);
+    await postSlack(`Claude task execution failed\nTask: ${task.title}\nError: ${msg}`);
   }
 
   const { data: finalTask } = await supabase

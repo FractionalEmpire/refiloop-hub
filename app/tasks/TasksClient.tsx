@@ -15,9 +15,9 @@ const STATUS_LABELS: Record<string, string> = {
 };
 const STATUSES = ["todo", "in_progress", "blocked", "done"] as const;
 const TYPE_CONFIG: Record<string, { label: string; icon: string; color: string; bg: string }> = {
-  bug:     { label: "Bug",     icon: "ð", color: "#f85149", bg: "#f8514920" },
-  feature: { label: "Feature", icon: "â¨", color: "#58a6ff", bg: "#58a6ff20" },
-  task:    { label: "Task",    icon: "â",  color: "#8b949e", bg: "#8b949e20" },
+  bug:     { label: "Bug",     icon: "B", color: "#f85149", bg: "#f8514920" },
+  feature: { label: "Feature", icon: "F", color: "#58a6ff", bg: "#58a6ff20" },
+  task:    { label: "Task",    icon: "T", color: "#8b949e", bg: "#8b949e20" },
 };
 
 const ASSIGNEE_COLOR: Record<string, string> = {
@@ -47,7 +47,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const [allProjectNames, setAllProjectNames] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
+  const [newTask, setNewTask] = useState({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", branch: "hub-david-review" });
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [showRunModal, setShowRunModal] = useState(false);
@@ -59,9 +59,9 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   const dragTaskId = useRef<string | null>(null);
 
   const MODELS = [
-    { id: "claude-opus-4-7", label: "Opus 4.7 â most capable" },
-    { id: "claude-sonnet-4-6", label: "Sonnet 4.6 â recommended" },
-    { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 â fastest" },
+    { id: "claude-opus-4-7", label: "Opus 4.7 - most capable" },
+    { id: "claude-sonnet-4-6", label: "Sonnet 4.6 - recommended" },
+    { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 - fastest" },
   ];
 
   const load = useCallback(async () => {
@@ -108,7 +108,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
     if (p) setProjectFilter(p);
   }, []);
 
-  // Load ALL project names (ignores assignee filter â needed for dropdown)
+  // Load ALL project names (ignores assignee filter - needed for dropdown)
   useEffect(() => {
     fetch("/api/projects")
       .then((r) => r.json())
@@ -138,14 +138,28 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
   async function createTask() {
     if (!newTask.title.trim()) return;
     setSaving(true);
+    const description = newTask.description.trim();
+    const notes =
+      newTask.assignee === "claude"
+        ? [`branch: ${newTask.branch || "hub-david-review"}`, description].filter(Boolean).join("\n\n")
+        : description;
+    const payload = {
+      title: newTask.title,
+      description,
+      assignee: newTask.assignee,
+      priority: newTask.priority,
+      project: newTask.project,
+      type: newTask.type,
+      notes,
+    };
     const res = await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newTask),
+      body: JSON.stringify(payload),
     });
     const task = await res.json();
     setTasks((prev) => [task, ...prev]);
-    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task" });
+    setNewTask({ title: "", description: "", assignee: "gorjan", priority: "p1", project: "", type: "task", branch: "hub-david-review" });
     setShowNew(false);
     setSaving(false);
   }
@@ -230,13 +244,13 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
         <div>
           <h1 className="text-xl font-semibold" style={{ color: "#e6edf3" }}>Tasks</h1>
           <p className="text-sm mt-0.5" style={{ color: "#8b949e" }}>
-            {tasks.filter((t) => t.status !== "done").length} open Â· {tasks.filter((t) => t.status === "done").length} done
+            {tasks.filter((t) => t.status !== "done").length} open / {tasks.filter((t) => t.status === "done").length} done
           </p>
         </div>
         <div className="flex items-center gap-3">
           <input
             type="text"
-            placeholder="Search tasksâ¦"
+            placeholder="Search tasks..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="px-3 py-1.5 text-xs rounded-md outline-none"
@@ -332,7 +346,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 className="w-full px-3 py-2 rounded-md text-sm outline-none resize-none"
                 style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
                 rows={3}
-                placeholder="Description (be specific â Claude will read this)"
+                placeholder="Description (be specific - Claude will read this)"
                 value={newTask.description}
                 onChange={(e) => setNewTask((p) => ({ ...p, description: e.target.value }))}
               />
@@ -374,7 +388,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     value={newTask.project}
                     onChange={(e) => setNewTask((p) => ({ ...p, project: e.target.value }))}
                   >
-                    <option value="">â select â</option>
+                    <option value="">-- select --</option>
                     {allProjectNames.map((p) => (
                       <option key={p} value={p}>{p}</option>
                     ))}
@@ -388,16 +402,30 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 value={newTask.type}
                 onChange={(e) => setNewTask((p) => ({ ...p, type: e.target.value }))}
                 >
-                <option value="task">â Task</option>
-                <option value="bug">ð Bug</option>
-                <option value="feature">â¨ Feature</option>
+                <option value="task">Task</option>
+                <option value="bug">Bug</option>
+                <option value="feature">Feature</option>
                 </select>
                 </div>
               </div>
               {newTask.assignee === "claude" && (
-                <p className="text-xs px-3 py-2 rounded-md" style={{ background: "#d9770610", border: "1px solid #d9770630", color: "#d97706" }}>
-                  Claude will execute this autonomously. Make the description detailed and specific.
-                </p>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-xs mb-1" style={{ color: "#8b949e" }}>Claude branch</label>
+                    <select
+                      className="w-full px-2 py-1.5 rounded-md text-xs outline-none"
+                      style={{ background: "#0d1117", border: "1px solid #30363d", color: "#e6edf3" }}
+                      value={newTask.branch}
+                      onChange={(e) => setNewTask((p) => ({ ...p, branch: e.target.value }))}
+                    >
+                      <option value="hub-david-review">hub-david-review</option>
+                      <option value="main">main production</option>
+                    </select>
+                  </div>
+                  <p className="text-xs px-3 py-2 rounded-md" style={{ background: "#d9770610", border: "1px solid #d9770630", color: "#d97706" }}>
+                    Claude will execute on the selected branch. Use hub-david-review unless this is ready for production.
+                  </p>
+                </div>
               )}
               <div className="flex gap-2 pt-1">
                 <button
@@ -406,7 +434,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   className="flex-1 py-2 rounded-md text-xs font-semibold"
                   style={{ background: "#1f6feb", color: "#fff", opacity: saving ? 0.6 : 1 }}
                 >
-                  {saving ? "Creatingâ¦" : "Create Task"}
+                  {saving ? "Creating..." : "Create Task"}
                 </button>
                 <button
                   onClick={() => setShowNew(false)}
@@ -451,7 +479,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   className="flex-1 py-2 rounded-md text-xs font-semibold"
                   style={{ background: "#d97706", color: "#fff" }}
                 >
-                  â¶ Run Now
+                  Run Now
                 </button>
                 <button
                   onClick={() => setShowRunModal(false)}
@@ -468,7 +496,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
 
       {/* Kanban board */}
       {loading ? (
-        <div className="text-sm" style={{ color: "#484f58" }}>Loading tasksâ¦</div>
+        <div className="text-sm" style={{ color: "#484f58" }}>Loading tasks...</div>
       ) : (
         <div className="grid grid-cols-4 gap-4">
           {STATUSES.map((status) => (
@@ -514,7 +542,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                     onMouseLeave={(e) => (e.currentTarget.style.borderColor = task.assignee === "claude" ? "#d9770640" : "#30363d")}
                   >
                     <div className="flex items-center gap-1.5 mb-2">
-                      <span className="text-xs px-1 py-0.5 rounded" style={{ background: TYPE_CONFIG[task.type || "task"]?.bg || "#8b949e20", color: TYPE_CONFIG[task.type || "task"]?.color || "#8b949e" }}>{TYPE_CONFIG[task.type || "task"]?.icon || "â"}</span>
+                      <span className="text-xs px-1 py-0.5 rounded" style={{ background: TYPE_CONFIG[task.type || "task"]?.bg || "#8b949e20", color: TYPE_CONFIG[task.type || "task"]?.color || "#8b949e" }}>{TYPE_CONFIG[task.type || "task"]?.icon || "T"}</span>
                       <span
                         className="text-xs font-mono px-1 py-0.5 rounded"
                         style={{ background: `${PRIORITY_COLORS[task.priority]}20`, color: PRIORITY_COLORS[task.priority] }}
@@ -528,7 +556,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                       )}
                       {claudeRunState(task) === "working" && (
                         <span className="text-xs px-1 py-0.5 rounded animate-pulse" style={{ background: "#d9770620", color: "#d97706" }}>
-                          workingâ¦
+                          working...
                         </span>
                       )}
                       {claudeRunState(task) === "stale" && (
@@ -580,7 +608,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
         >
           <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: "#30363d" }}>
             <h3 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Task Detail</h3>
-            <button onClick={() => setSelectedTask(null)} style={{ color: "#8b949e" }}>â</button>
+            <button onClick={() => setSelectedTask(null)} style={{ color: "#8b949e" }}>x</button>
           </div>
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
             <div>
@@ -627,9 +655,9 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   value={selectedTask.priority}
                   onChange={(e) => { const v = e.target.value as Task["priority"]; updateTask(selectedTask.id, { priority: v }); setSelectedTask((p) => p ? { ...p, priority: v } : null); }}
                 >
-                  <option value="p0">P0 z Critical</option>
-                  <option value="p1">P1 â High</option>
-                  <option value="p2">P2 â Normal</option>
+                  <option value="p0">P0 - Critical</option>
+                  <option value="p1">P1 - High</option>
+                  <option value="p2">P2 - Normal</option>
                   <option value="later">Later</option>
                 </select>
               </div>
@@ -641,9 +669,9 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   value={selectedTask.type || "task"}
                   onChange={(e) => { const v = e.target.value as Task["type"]; updateTask(selectedTask.id, { type: v }); setSelectedTask((p) => p ? { ...p, type: v } : null); }}
                 >
-                  <option value="task">â Task</option>
-                  <option value="bug">ð Bug</option>
-                  <option value="feature">â¨ Feature</option>
+                  <option value="task">Task</option>
+                  <option value="bug">Bug</option>
+                  <option value="feature">Feature</option>
                 </select>
               </div>
               <div>
@@ -669,7 +697,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   value={selectedTask.project || ""}
                   onChange={(e) => { updateTask(selectedTask.id, { project: e.target.value }); setSelectedTask((p) => p ? { ...p, project: e.target.value } : null); }}
                 >
-                  <option value="">â select â</option>
+                  <option value="">-- select --</option>
                   {allProjectNames.map((p) => (
                     <option key={p} value={p}>{p}</option>
                   ))}
@@ -682,7 +710,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 className="w-full px-3 py-2 rounded-md text-sm outline-none resize-none font-mono"
                 style={{ background: "#0d1117", border: "1px solid #30363d", color: selectedTask.assignee === "claude" ? "#d97706" : "#e6edf3" }}
                 rows={6}
-                placeholder={selectedTask.assignee === "claude" ? "Claude will log evidence hereâ¦" : "Add notes, links, contextâ¦"}
+                placeholder={selectedTask.assignee === "claude" ? "Claude will log evidence here..." : "Add notes, links, context..."}
                 value={selectedTask.notes || ""}
                 onChange={(e) => setSelectedTask((p) => p ? { ...p, notes: e.target.value } : null)}
                 onBlur={() => updateTask(selectedTask.id, { notes: selectedTask.notes })}
@@ -714,7 +742,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                   className="px-3 py-2 rounded-md text-xs font-semibold"
                   style={{ background: "#1a7f37", color: "#fff" }}
                 >
-                  â Done
+                  Done
                 </button>
               </>
             ) : (
@@ -723,7 +751,7 @@ export default function TasksClient({ user }: { user: "david" | "gorjan" }) {
                 className="flex-1 py-2 rounded-md text-xs font-semibold"
                 style={{ background: "#1a7f37", color: "#fff" }}
               >
-                â Mark Done
+                Mark Done
               </button>
             )}
             <button

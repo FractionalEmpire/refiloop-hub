@@ -147,10 +147,7 @@ function inputDate(date: Date) {
 }
 
 function defaultStartDate() {
-  const date = new Date();
-  date.setDate(1);
-  date.setMonth(date.getMonth() - 1);
-  return inputDate(date);
+  return inputDate(new Date());
 }
 
 function normalizeFilters(params: SearchParams) {

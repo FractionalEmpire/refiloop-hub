@@ -697,9 +697,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const totalPages = Math.max(1, Math.ceil(calls.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedCalls = calls.slice((safePage - 1) * pageSize, safePage * pageSize);
-  const headerColors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#58a6ff", "#a371f7", "#ec4899"];
-  const headerColor = headerColors[Math.floor(Math.random() * headerColors.length)];
-
   return (
     <AppShell user={user}>
       <div className="p-8 max-w-7xl">

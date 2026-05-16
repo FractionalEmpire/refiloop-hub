@@ -849,54 +849,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           </div>
         </section>
 
-        <form className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
-          <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Filters</h2>
-                <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Scope the report by date, agent, disposition, and whether recordings exist.</p>
-              </div>
-              <div className="rounded-full border px-3 py-1 text-[11px] font-medium" style={{ background: "#0d1117", color: "#8b949e", borderColor: "#30363d" }}>
-                {fmtCount(calls.length)} matching calls
-              </div>
-            </div>
-          </div>
-          <div className="grid gap-3 px-5 py-4 md:grid-cols-2 xl:grid-cols-6">
-            <label className="text-xs" style={{ color: "#8b949e" }}>
-              Start
-              <input name="start" type="date" defaultValue={filters.start} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }} />
-            </label>
-            <label className="text-xs" style={{ color: "#8b949e" }}>
-              End
-              <input name="end" type="date" defaultValue={filters.end} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }} />
-            </label>
-            <label className="text-xs" style={{ color: "#8b949e" }}>
-              Agent
-              <select name="agent" defaultValue={filters.agent} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
-                <option value="all">All Agents</option>
-                {agentOptions.map((agent) => <option key={agent} value={agent}>{agent}</option>)}
-              </select>
-            </label>
-            <label className="text-xs" style={{ color: "#8b949e" }}>
-              Disposition
-              <select name="disposition" defaultValue={filters.disposition} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
-                <option value="all">All Results</option>
-                {dispositionOptions.map((disposition) => <option key={disposition} value={disposition}>{formatDisposition(disposition)}</option>)}
-              </select>
-            </label>
-            <label className="text-xs" style={{ color: "#8b949e" }}>
-              View
-              <select name="asset" defaultValue={filters.asset} className="mt-1 w-full rounded-md px-3 py-2 text-sm outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
-                {ASSET_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <div className="flex items-end gap-2 xl:col-span-2">
-              <button className="w-full rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#238636", color: "#fff" }}>Apply</button>
-              <a href="/mojo-stats" className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}>Reset</a>
-            </div>
-          </div>
-        </form>
-
         <div className="mb-6 grid grid-cols-4 gap-4">
           {[
             { label: "Mojo outcomes", value: calls.length, color: "#58a6ff" },

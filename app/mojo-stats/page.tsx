@@ -2,6 +2,9 @@ import AppShell from "@/components/AppShell";
 import { getCurrentUser } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
 import { redirect } from "next/navigation";
+import PullMojoButton from "./PullMojoButton";
+import SessionResultsTable from "./SessionResultsTable";
+import ApplyFiltersButton from "./ApplyFiltersButton";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +18,12 @@ type SearchParams = {
   pageSize?: string;
   sort?: string;
   dir?: string;
+  sessionPull?: string;
+  sessionPullStatus?: string;
+  sessionPullMessage?: string;
+  sessionPulled?: string;
+  sessionSaved?: string;
+  sessionExisting?: string;
 };
 
 type SyncBatch = {
@@ -105,11 +114,51 @@ type SessionSummary = {
   id: string;
   date: string;
   agent: string;
+  type: string;
+  list_name: string;
   calls: number;
-  connected: number;
+  appointments: number;
+  leads: number;
+  dial_seconds: number | null;
   recordings: number;
   talk_seconds: number;
-  top_dispositions: string;
+  pause_seconds: number | null;
+  start_at: string | null;
+  end_at: string | null;
+  result_rows: SessionResultRow[];
+};
+
+type SessionResultRow = {
+  result: string;
+  calls: number;
+  talk_seconds: number;
+  dial_seconds: number | null;
+};
+
+type MojoSessionReport = {
+  id: number;
+  mojo_session_key: string;
+  report_date: string;
+  agent_name: string | null;
+  session_type: string | null;
+  list_name: string | null;
+  calls: number | null;
+  appointments: number | null;
+  leads: number | null;
+  dial_seconds: number | null;
+  talk_seconds: number | null;
+  pause_seconds: number | null;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+type MojoSessionReportResult = {
+  id: number;
+  session_report_id: number;
+  result: string;
+  total_calls: number | null;
+  talk_seconds: number | null;
+  dial_seconds: number | null;
 };
 
 type MojoRecording = {
@@ -267,6 +316,31 @@ async function fetchRecordings(filters: ReturnType<typeof normalizeFilters>): Pr
   return (data ?? []) as MojoRecording[];
 }
 
+async function fetchMojoSessionReports(filters: ReturnType<typeof normalizeFilters>): Promise<MojoSessionReport[]> {
+  const query = supabase
+    .from("mojo_session_reports")
+    .select("id,mojo_session_key,report_date,agent_name,session_type,list_name,calls,appointments,leads,dial_seconds,talk_seconds,pause_seconds,start_time,end_time")
+    .gte("report_date", filters.start)
+    .lte("report_date", filters.end)
+    .order("report_date", { ascending: false })
+    .order("start_time", { ascending: true });
+  if (filters.agent !== "all") query.eq("agent_name", filters.agent);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as MojoSessionReport[];
+}
+
+async function fetchMojoSessionReportResults(sessionIds: number[]): Promise<MojoSessionReportResult[]> {
+  if (sessionIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from("mojo_session_report_results")
+    .select("id,session_report_id,result,total_calls,talk_seconds,dial_seconds")
+    .in("session_report_id", sessionIds)
+    .order("total_calls", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as MojoSessionReportResult[];
+}
+
 async function fetchTargets(table: "owners" | "entities", ids: number[]): Promise<Map<number, Target>> {
   if (ids.length === 0) return new Map();
   const ownerFields = "id,name,outreach_status,total_call_attempts,last_disposition,call_later_until,next_eligible_date,parked_until";
@@ -303,11 +377,41 @@ function fmtDate(value: string | null | undefined) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
 }
 
+function fmtMojoDate(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function fmtClock(value: string | null | undefined) {
+  if (!value) return "-";
+  if (/^\d{1,2}:\d{2}\s?(AM|PM)$/i.test(value.trim()) || value.trim() === "-") return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function fmtDuration(seconds: number) {
   if (!Number.isFinite(seconds) || seconds <= 0) return "0m";
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
+}
+
+function fmtHms(seconds: number | null | undefined) {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "-";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
 function fmtRecordingDuration(call: DisplayCall) {
@@ -670,22 +774,81 @@ function buildSessionSummaries(calls: DisplayCall[]): SessionSummary[] {
       id: key,
       date: dateKey,
       agent: call.agent_name,
+      type: "-",
+      list_name: "-",
       calls: 0,
-      connected: 0,
+      appointments: 0,
+      leads: 0,
+      dial_seconds: null,
       recordings: 0,
       talk_seconds: 0,
-      top_dispositions: "",
+      pause_seconds: null,
+      start_at: null,
+      end_at: null,
+      result_rows: [],
     };
     existing.calls += 1;
-    if (isConnectedCall(call)) existing.connected += 1;
     if (call.recording_url) existing.recordings += 1;
     existing.talk_seconds += Number(call.call_duration_sec ?? 0);
-    const dispositions = existing.top_dispositions ? existing.top_dispositions.split(", ") : [];
-    if (call.disposition && !dispositions.includes(call.disposition)) dispositions.push(call.disposition);
-    existing.top_dispositions = dispositions.slice(0, 3).join(", ");
+    if (!existing.start_at || call.called_at < existing.start_at) existing.start_at = call.called_at;
+    if (!existing.end_at || call.called_at > existing.end_at) existing.end_at = call.called_at;
+
+    const result = formatDisposition(call.disposition);
+    const resultRow = existing.result_rows.find((row) => row.result === result);
+    if (resultRow) {
+      resultRow.calls += 1;
+      resultRow.talk_seconds += Number(call.call_duration_sec ?? 0);
+    } else {
+      existing.result_rows.push({
+        result,
+        calls: 1,
+        talk_seconds: Number(call.call_duration_sec ?? 0),
+        dial_seconds: null,
+      });
+    }
     buckets.set(key, existing);
   }
-  return Array.from(buckets.values()).sort((a, b) => (a.date === b.date ? a.agent.localeCompare(b.agent) : b.date.localeCompare(a.date)));
+  return Array.from(buckets.values())
+    .map((session) => ({
+      ...session,
+      result_rows: session.result_rows.sort((a, b) => b.calls - a.calls || a.result.localeCompare(b.result)),
+    }))
+    .sort((a, b) => (a.date === b.date ? a.agent.localeCompare(b.agent) : b.date.localeCompare(a.date)));
+}
+
+function buildSessionSummariesFromMojoReports(
+  reports: MojoSessionReport[],
+  reportResults: MojoSessionReportResult[],
+): SessionSummary[] {
+  const bySession = new Map<number, MojoSessionReportResult[]>();
+  for (const result of reportResults) {
+    const existing = bySession.get(result.session_report_id) ?? [];
+    existing.push(result);
+    bySession.set(result.session_report_id, existing);
+  }
+
+  return reports.map((report) => ({
+    id: `mojo-session-${report.id}`,
+    date: report.report_date,
+    agent: report.agent_name ?? "All Agents",
+    type: report.session_type ?? "-",
+    list_name: report.list_name ?? "-",
+    calls: Number(report.calls ?? 0),
+    appointments: Number(report.appointments ?? 0),
+    leads: Number(report.leads ?? 0),
+    dial_seconds: report.dial_seconds,
+    recordings: 0,
+    talk_seconds: Number(report.talk_seconds ?? 0),
+    pause_seconds: report.pause_seconds,
+    start_at: report.start_time,
+    end_at: report.end_time,
+    result_rows: (bySession.get(report.id) ?? []).map((result) => ({
+      result: result.result,
+      calls: Number(result.total_calls ?? 0),
+      talk_seconds: Number(result.talk_seconds ?? 0),
+      dial_seconds: result.dial_seconds,
+    })),
+  }));
 }
 
 export default async function MojoStatsPage({ searchParams = {} }: { searchParams?: SearchParams }) {
@@ -694,12 +857,17 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
 
   const filters = normalizeFilters(searchParams);
 
-  const [syncBatches, pushHistory, rawCalls, recordings] = await Promise.all([
+  const [syncBatches, pushHistory, rawCalls, recordings, mojoSessionReports] = await Promise.all([
     safe(fetchSyncBatches, []),
     safe(fetchMojoPushHistory, []),
     safe(() => fetchCalls(filters), []),
     safe(() => fetchRecordings(filters), []),
+    safe(() => fetchMojoSessionReports(filters), []),
   ]);
+  const mojoSessionResults = await safe(
+    () => fetchMojoSessionReportResults(mojoSessionReports.map((report) => report.id)),
+    [],
+  );
 
   const ownerIds = Array.from(new Set(rawCalls.map((call) => call.owner_id).filter(Boolean))) as number[];
   const entityIds = Array.from(new Set(rawCalls.map((call) => call.entity_id).filter(Boolean))) as number[];
@@ -728,7 +896,9 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     if (isNoContactCall(call) && !call.recording_url) return false;
     return true;
   });
-  const sessions = buildSessionSummaries(calls);
+  const sessions = mojoSessionReports.length
+    ? buildSessionSummariesFromMojoReports(mojoSessionReports, mojoSessionResults)
+    : buildSessionSummaries(calls);
   const agentOptions = unique([
     ...allCalls.map((call) => call.agent_name).filter((agent) => agent !== "All Agents"),
     ...sessions.map((session) => session.agent).filter((agent) => agent !== "All Agents"),
@@ -739,7 +909,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     ...recordings.map((recording) => recording.disposition),
   ]);
   const connectedCalls = calls.filter(isConnectedCall);
-  const recordingCount = calls.filter((call) => call.recording_url).length;
+  const recordingCount = recordings.length;
   const latestSync = syncBatches[0]?.synced_at ?? null;
   const pushBatches = buildPushBatches(pushHistory);
   const todayKey = inputDate(new Date());
@@ -754,9 +924,11 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
     callsByDay.set(day, (callsByDay.get(day) ?? 0) + 1);
     const disposition = formatDisposition(call.disposition);
     callsByDisposition.set(disposition, (callsByDisposition.get(disposition) ?? 0) + 1);
-    if (call.recording_url) {
-      recordingsByAgent.set(call.agent_name, (recordingsByAgent.get(call.agent_name) ?? 0) + 1);
-    }
+  }
+
+  for (const recording of recordings) {
+    const agent = recording.agent_name ?? "All Agents";
+    recordingsByAgent.set(agent, (recordingsByAgent.get(agent) ?? 0) + 1);
   }
 
   for (const item of pushHistory) {
@@ -769,12 +941,36 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const callsByDispositionRows = chartRowsFromMap(callsByDisposition, ["#2ea043", "#1f6feb", "#d29922", "#a371f7", "#f85149"]);
   const recordingsByAgentRows = chartRowsFromMap(recordingsByAgent, ["#d29922", "#58a6ff", "#3fb950", "#a371f7", "#f85149"]);
   const pushOutcomeRows = chartRowsFromMap(pushOutcomes, ["#3fb950", "#d29922", "#f85149", "#8b949e", "#58a6ff"]);
-  const reportCalls = sortCalls(calls.filter((call) => call.recording_url), filters.sort, filters.dir);
+  const reportCalls = sortCalls(
+    buildRecordingDisplayCalls(recordings).filter((call) => {
+      if (filters.agent !== "all" && call.agent_name !== filters.agent) return false;
+      if (filters.disposition !== "all" && call.disposition !== filters.disposition) return false;
+      if (filters.asset === "connected" && !isConnectedCall(call)) return false;
+      return true;
+    }),
+    filters.sort,
+    filters.dir,
+  );
   const pageSize = Number(filters.pageSize);
   const currentPage = Math.max(1, Number(filters.page ?? "1") || 1);
   const totalPages = Math.max(1, Math.ceil(reportCalls.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
   const pagedCalls = reportCalls.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const sessionPullColor =
+    searchParams.sessionPull === "ok" ? "#3fb950" :
+    searchParams.sessionPull === "empty" ? "#d29922" :
+    "#f85149";
+  const sessionPullText =
+    searchParams.sessionPull === "ok"
+      ? `Mojo session pull finished: ${searchParams.sessionExisting ?? "0"} already in Supabase before pull, ${searchParams.sessionPulled ?? "0"} pulled from Mojo, ${searchParams.sessionSaved ?? "0"} saved/upserted.`
+      : searchParams.sessionPull === "empty"
+        ? `Mojo session pull ran, but returned 0 rows. Existing Supabase rows before pull: ${searchParams.sessionExisting ?? "0"}. ${searchParams.sessionPullMessage ?? "Check VPS logs."}`
+        : searchParams.sessionPull === "missing-secret"
+          ? `Session pull is not configured: missing MOJO_PUSH_SECRET. Existing Supabase rows for this range: ${searchParams.sessionExisting ?? "0"}.`
+          : searchParams.sessionPull === "error"
+            ? `Session pull failed${searchParams.sessionPullStatus ? ` with HTTP ${searchParams.sessionPullStatus}` : ""}. Existing Supabase rows before pull: ${searchParams.sessionExisting ?? "0"}. ${searchParams.sessionPullMessage ?? "Check VPS logs."}`
+            : null;
+
   return (
     <AppShell user={user}>
       <div className="p-8 max-w-7xl">
@@ -794,6 +990,11 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           <span className="font-semibold" style={{ color: "#58a6ff" }}>Loaded range:</span> {filters.start} to {filters.end}.
         </div>
 
+        {sessionPullText && (
+          <div className="mb-6 rounded-lg border px-4 py-3 text-sm" style={{ background: "#161b22", borderColor: sessionPullColor, color: "#c9d1d9" }}>
+            <span className="font-semibold" style={{ color: sessionPullColor }}>Session pull status:</span> {sessionPullText}
+          </div>
+        )}
         <section className="mb-6">
           <div className="mb-3 flex items-end justify-between gap-3">
             <div>
@@ -856,7 +1057,8 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                 </select>
               </label>
               <div className="flex items-end gap-2 xl:col-span-2">
-                <button className="w-full rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#238636", color: "#fff" }}>Apply</button>
+                <ApplyFiltersButton />
+                <PullMojoButton />
                 <a href="/mojo-stats" className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: "#21262d", color: "#8b949e", border: "1px solid #30363d" }}>Reset</a>
               </div>
             </div>
@@ -1016,64 +1218,34 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
           </div>
         </section>
 
-        <div className="grid gap-6 xl:grid-cols-2">
-          <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
-            <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
-              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Session Results</h2>
-              <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Supabase-derived daily summaries from Mojo call attempts.</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr style={{ color: "#8b949e", borderBottom: "1px solid #30363d" }}>
-                    {["Date", "Agent", "Calls", "Connected", "Recordings", "Talk", "Notes"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessions.length === 0 ? (
-                    <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={7}>No session summaries for this filter yet.</td></tr>
-                  ) : sessions.slice(0, 20).map((row) => (
-                    <tr key={row.id} style={{ borderBottom: "1px solid #21262d" }}>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDate(row.date)}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#e6edf3" }}>{row.agent}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{row.calls}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{row.connected}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{row.recordings}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDuration(row.talk_seconds)}</td>
-                      <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{row.top_dispositions || "None"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-          <section className="rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
-            <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
-              <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Reverse Sync Batches</h2>
-            </div>
-            <div className="divide-y" style={{ borderColor: "#21262d" }}>
-              {syncBatches.length === 0 ? (
-                <div className="px-5 py-6 text-sm" style={{ color: "#484f58" }}>No Mojo reverse sync batches yet.</div>
-              ) : syncBatches.map((batch) => (
-                <div key={batch.id} className="px-5 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-xs font-semibold" style={{ color: statusColor(batch.success) }}>{batch.success ? "Success" : "Failed"}</span>
-                    <span className="text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(batch.synced_at)}</span>
-                  </div>
-                  <div className="mt-1 text-xs" style={{ color: "#c9d1d9" }}>{fmtCount(batch.records_pushed)} rows pushed, {fmtCount(batch.bd_ids_created)} inserted</div>
-                  <div className="mt-1 text-xs" style={{ color: "#484f58" }}>{batch.message ?? "No message"}</div>
+        <section className="mb-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
+          <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Session Results</h2>
+                <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>
+                  {mojoSessionReports.length
+                    ? "Exact Mojo session-report rows pulled into Supabase."
+                    : "Mojo-style session summary derived from Supabase call attempts until the session pull is run."}
+                </p>
+                {sessionPullText && (
+                  <p className="mt-2 text-xs" style={{ color: sessionPullColor }}>
+                    {sessionPullText}
+                  </p>
+                )}
+                <div className="mt-2 text-[11px]" style={{ color: "#484f58" }}>
+                  Use the Pull Latest From Mojo button in Filters. It posts the selected Start/End dates, checks existing Supabase session rows first, then calls the VPS scraper /pull-mojo-session-report.
                 </div>
-              ))}
+              </div>
             </div>
-          </section>
-        </div>
+          </div>
+          <SessionResultsTable sessions={sessions} />
+        </section>
         <section className="mt-6 rounded-lg border" style={{ background: "#161b22", borderColor: "#30363d" }}>
           <div className="border-b px-5 py-4" style={{ borderColor: "#30363d" }}>
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Detail Report</h2>
+                <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Recordings Report</h2>
                 <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Recording rows pulled from Mojo and stored in Supabase for Hub review.</p>
               </div>
               <div className="text-xs" style={{ color: "#8b949e" }}>Page {safePage} of {totalPages}</div>
@@ -1086,41 +1258,28 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                   <SortHeader label="When" field="when" filters={filters} />
                   <SortHeader label="Agent" field="agent" filters={filters} />
                   <SortHeader label="Target" field="target" filters={filters} />
-                  <SortHeader label="Phone" field="phone" filters={filters} />
                   <th className="px-4 py-3 text-left text-xs font-medium">Duration</th>
-                  <SortHeader label="Disposition" field="disposition" filters={filters} />
-                  <SortHeader label="Recording" field="recording" filters={filters} />
-                  <SortHeader label="Source" field="source" filters={filters} />
+                  <SortHeader label="Call Result" field="disposition" filters={filters} />
+                  <th className="px-4 py-3 text-left text-xs font-medium">Recording</th>
                 </tr>
               </thead>
               <tbody>
                 {pagedCalls.length === 0 ? (
-                  <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={8}>No call-detail rows for this filter.</td></tr>
+                  <tr><td className="px-4 py-6 text-sm" style={{ color: "#484f58" }} colSpan={6}>No recording rows for this filter.</td></tr>
                 ) : pagedCalls.map((call) => (
                   <tr key={call.id} style={{ borderBottom: "1px solid #21262d" }}>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtDateTime(call.called_at)}</td>
-                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.agent_name}</td>
-                    <td className="px-4 py-3">
-                      <div className="text-xs font-medium" style={{ color: "#e6edf3" }}>{call.target_name}</div>
-                      <div className="text-xs" style={{ color: "#484f58" }}>{call.phone_number ?? "Unknown phone"}</div>
-                    </td>
-                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.phone_number ?? "Unknown"}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#e6edf3" }}>{call.agent_name}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#e6edf3" }}>{call.target_name}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{fmtRecordingDuration(call)}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{formatDisposition(call.disposition)}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
                       {call.recording_url ? (
-                        <div className="min-w-[220px]">
-                          <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Mojo audio</a>
-                          <div className="mt-1 text-[11px]" style={{ color: "#484f58" }}>
-                            {call.recording_contact_name ?? call.target_name}
-                            {call.recording_source_url ? ` | ${call.recording_source_url}` : ""}
-                          </div>
-                        </div>
+                        <a href={call.recording_url} target="_blank" rel="noreferrer" style={{ color: "#58a6ff" }}>Play</a>
                       ) : (
                         "None"
                       )}
                     </td>
-                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.source ?? "mojo"}</td>
                   </tr>
                 ))}
               </tbody>

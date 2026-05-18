@@ -12,6 +12,9 @@ type SearchParams = {
   disposition?: string;
   asset?: string;
   page?: string;
+  pageSize?: string;
+  sort?: string;
+  dir?: string;
 };
 
 type SyncBatch = {
@@ -147,6 +150,10 @@ const ASSET_OPTIONS = [
   { value: "recordings", label: "Has recording" },
 ];
 
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 150, 200, 250];
+const CALL_SORT_FIELDS = ["when", "agent", "target", "phone", "disposition", "recording", "attempts", "source"] as const;
+type CallSortField = (typeof CALL_SORT_FIELDS)[number];
+
 async function safe<T>(task: () => Promise<T>, fallback: T): Promise<T> {
   try {
     return await task();
@@ -165,6 +172,9 @@ function defaultStartDate() {
 
 function normalizeFilters(params: SearchParams) {
   const end = params.end || inputDate(new Date());
+  const pageSize = PAGE_SIZE_OPTIONS.includes(Number(params.pageSize)) ? String(Number(params.pageSize)) : "20";
+  const sort: CallSortField = CALL_SORT_FIELDS.includes(params.sort as CallSortField) ? (params.sort as CallSortField) : "when";
+  const dir: "asc" | "desc" = params.dir === "asc" ? "asc" : "desc";
   return {
     start: params.start || defaultStartDate(),
     end,
@@ -172,6 +182,9 @@ function normalizeFilters(params: SearchParams) {
     disposition: params.disposition || "all",
     asset: params.asset || "all",
     page: params.page || "1",
+    pageSize,
+    sort,
+    dir,
   };
 }
 
@@ -295,6 +308,14 @@ function fmtDuration(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return remainder === 0 ? `${minutes}m` : `${minutes}m ${remainder}s`;
+}
+
+function fmtRecordingDuration(call: DisplayCall) {
+  const seconds = Number(call.call_duration_sec ?? 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "Unknown";
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
 function formatDisposition(value: string | null | undefined) {
@@ -581,6 +602,65 @@ function isNoContactCall(call: DisplayCall) {
   return isNoContact(call.outreach_status) || isNoContact(call.disposition);
 }
 
+function callSortValue(call: DisplayCall, field: CallSortField) {
+  if (field === "when") return new Date(call.called_at || 0).getTime();
+  if (field === "agent") return call.agent_name.toLowerCase();
+  if (field === "target") return call.target_name.toLowerCase();
+  if (field === "phone") return (call.phone_number ?? "").toLowerCase();
+  if (field === "disposition") return formatDisposition(call.disposition).toLowerCase();
+  if (field === "recording") return call.recording_url ? 1 : 0;
+  if (field === "attempts") return Number(call.total_call_attempts ?? 0);
+  return (call.source ?? "mojo").toLowerCase();
+}
+
+function sortCalls(calls: DisplayCall[], field: CallSortField, dir: "asc" | "desc") {
+  const direction = dir === "asc" ? 1 : -1;
+  return [...calls].sort((a, b) => {
+    const left = callSortValue(a, field);
+    const right = callSortValue(b, field);
+    if (typeof left === "number" && typeof right === "number") return (left - right) * direction;
+    return String(left).localeCompare(String(right)) * direction;
+  });
+}
+
+function mojoStatsHref(filters: ReturnType<typeof normalizeFilters>, overrides: Partial<ReturnType<typeof normalizeFilters>>) {
+  const next = { ...filters, ...overrides };
+  const params = new URLSearchParams({
+    start: next.start,
+    end: next.end,
+    agent: next.agent,
+    disposition: next.disposition,
+    asset: next.asset,
+    page: next.page,
+    pageSize: next.pageSize,
+    sort: next.sort,
+    dir: next.dir,
+  });
+  return `/mojo-stats?${params.toString()}`;
+}
+
+function SortHeader({
+  label,
+  field,
+  filters,
+}: {
+  label: string;
+  field: CallSortField;
+  filters: ReturnType<typeof normalizeFilters>;
+}) {
+  const active = filters.sort === field;
+  const nextDir = active && filters.dir === "asc" ? "desc" : "asc";
+  const marker = active ? (filters.dir === "asc" ? " ASC" : " DESC") : "";
+
+  return (
+    <th className="px-4 py-3 text-left text-xs font-medium">
+      <a href={mojoStatsHref(filters, { sort: field, dir: nextDir, page: "1" })} style={{ color: active ? "#e6edf3" : "#8b949e" }}>
+        {label}{marker}
+      </a>
+    </th>
+  );
+}
+
 function buildSessionSummaries(calls: DisplayCall[]): SessionSummary[] {
   const buckets = new Map<string, SessionSummary>();
   for (const call of calls) {
@@ -645,7 +725,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const calls = [...enrichedCalls, ...recordingOnlyCalls].filter((call) => {
     if (filters.agent !== "all" && call.agent_name !== filters.agent) return false;
     if (filters.asset === "connected" && !isConnectedCall(call)) return false;
-    if (isNoContactCall(call)) return false;
+    if (isNoContactCall(call) && !call.recording_url) return false;
     return true;
   });
   const sessions = buildSessionSummaries(calls);
@@ -689,11 +769,12 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
   const callsByDispositionRows = chartRowsFromMap(callsByDisposition, ["#2ea043", "#1f6feb", "#d29922", "#a371f7", "#f85149"]);
   const recordingsByAgentRows = chartRowsFromMap(recordingsByAgent, ["#d29922", "#58a6ff", "#3fb950", "#a371f7", "#f85149"]);
   const pushOutcomeRows = chartRowsFromMap(pushOutcomes, ["#3fb950", "#d29922", "#f85149", "#8b949e", "#58a6ff"]);
-  const pageSize = 20;
+  const reportCalls = sortCalls(calls.filter((call) => call.recording_url), filters.sort, filters.dir);
+  const pageSize = Number(filters.pageSize);
   const currentPage = Math.max(1, Number(filters.page ?? "1") || 1);
-  const totalPages = Math.max(1, Math.ceil(calls.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(reportCalls.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
-  const pagedCalls = calls.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pagedCalls = reportCalls.slice((safePage - 1) * pageSize, safePage * pageSize);
   return (
     <AppShell user={user}>
       <div className="p-8 max-w-7xl">
@@ -993,7 +1074,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold" style={{ color: "#e6edf3" }}>Call Detail Report</h2>
-                <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Rows pulled from Mojo call detail and stored in Supabase for Hub review.</p>
+                <p className="mt-1 text-xs" style={{ color: "#8b949e" }}>Recording rows pulled from Mojo and stored in Supabase for Hub review.</p>
               </div>
               <div className="text-xs" style={{ color: "#8b949e" }}>Page {safePage} of {totalPages}</div>
             </div>
@@ -1002,9 +1083,14 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             <table className="min-w-full text-sm">
               <thead>
                 <tr style={{ color: "#8b949e", borderBottom: "1px solid #30363d" }}>
-                    {["When", "Agent", "Target", "Phone", "Disposition", "Recording", "Attempts", "Source"].map((header) => (
-                      <th key={header} className="px-4 py-3 text-left text-xs font-medium">{header}</th>
-                    ))}
+                  <SortHeader label="When" field="when" filters={filters} />
+                  <SortHeader label="Agent" field="agent" filters={filters} />
+                  <SortHeader label="Target" field="target" filters={filters} />
+                  <SortHeader label="Phone" field="phone" filters={filters} />
+                  <th className="px-4 py-3 text-left text-xs font-medium">Duration</th>
+                  <SortHeader label="Disposition" field="disposition" filters={filters} />
+                  <SortHeader label="Recording" field="recording" filters={filters} />
+                  <SortHeader label="Source" field="source" filters={filters} />
                 </tr>
               </thead>
               <tbody>
@@ -1019,6 +1105,7 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                       <div className="text-xs" style={{ color: "#484f58" }}>{call.phone_number ?? "Unknown phone"}</div>
                     </td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.phone_number ?? "Unknown"}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{fmtRecordingDuration(call)}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#c9d1d9" }}>{formatDisposition(call.disposition)}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>
                       {call.recording_url ? (
@@ -1033,7 +1120,6 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
                         "None"
                       )}
                     </td>
-                    <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{fmtCount(call.total_call_attempts)}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: "#8b949e" }}>{call.source ?? "mojo"}</td>
                   </tr>
                 ))}
@@ -1041,19 +1127,38 @@ export default async function MojoStatsPage({ searchParams = {} }: { searchParam
             </table>
           </div>
           <div className="flex items-center justify-between gap-3 border-t px-5 py-4" style={{ borderColor: "#30363d" }}>
-            <div className="text-xs" style={{ color: "#8b949e" }}>
-              Showing {pagedCalls.length ? (safePage - 1) * pageSize + 1 : 0} - {(safePage - 1) * pageSize + pagedCalls.length} of {calls.length}
+            <div className="flex items-center gap-3 text-xs" style={{ color: "#8b949e" }}>
+              <span>
+                Showing {pagedCalls.length ? (safePage - 1) * pageSize + 1 : 0} - {(safePage - 1) * pageSize + pagedCalls.length} of {reportCalls.length}
+              </span>
+              <form>
+                <input type="hidden" name="start" value={filters.start} />
+                <input type="hidden" name="end" value={filters.end} />
+                <input type="hidden" name="agent" value={filters.agent} />
+                <input type="hidden" name="disposition" value={filters.disposition} />
+                <input type="hidden" name="asset" value={filters.asset} />
+                <input type="hidden" name="sort" value={filters.sort} />
+                <input type="hidden" name="dir" value={filters.dir} />
+                <input type="hidden" name="page" value="1" />
+                <label>
+                  Rows{" "}
+                  <select name="pageSize" defaultValue={filters.pageSize} className="rounded-md px-2 py-1 text-xs outline-none" style={{ background: "#0d1117", color: "#e6edf3", border: "1px solid #30363d" }}>
+                    {PAGE_SIZE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </label>
+                <button className="ml-2 rounded-md px-2 py-1 text-xs font-semibold" style={{ background: "#21262d", color: "#c9d1d9", border: "1px solid #30363d" }}>Apply</button>
+              </form>
             </div>
             <div className="flex items-center gap-2">
               <a
-                href={`/mojo-stats?start=${filters.start}&end=${filters.end}&agent=${encodeURIComponent(filters.agent)}&disposition=${encodeURIComponent(filters.disposition)}&asset=${encodeURIComponent(filters.asset)}&page=${Math.max(1, safePage - 1)}`}
+                href={mojoStatsHref(filters, { page: String(Math.max(1, safePage - 1)) })}
                 className="rounded-md px-3 py-2 text-xs font-semibold"
                 style={{ background: safePage === 1 ? "#0d1117" : "#21262d", color: "#c9d1d9", border: "1px solid #30363d", pointerEvents: safePage === 1 ? "none" : "auto", opacity: safePage === 1 ? 0.5 : 1 }}
               >
                 Prev
               </a>
               <a
-                href={`/mojo-stats?start=${filters.start}&end=${filters.end}&agent=${encodeURIComponent(filters.agent)}&disposition=${encodeURIComponent(filters.disposition)}&asset=${encodeURIComponent(filters.asset)}&page=${Math.min(totalPages, safePage + 1)}`}
+                href={mojoStatsHref(filters, { page: String(Math.min(totalPages, safePage + 1)) })}
                 className="rounded-md px-3 py-2 text-xs font-semibold"
                 style={{ background: safePage === totalPages ? "#0d1117" : "#21262d", color: "#c9d1d9", border: "1px solid #30363d", pointerEvents: safePage === totalPages ? "none" : "auto", opacity: safePage === totalPages ? 0.5 : 1 }}
               >
